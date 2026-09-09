@@ -486,6 +486,10 @@ function showValidation(errors) {
   summary.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+function dismissValidation() {
+  $("#validation-summary").hidden = true;
+}
+
 function submitReport() {
   if (submitLocked) return;
   submitLocked = true;
@@ -719,6 +723,7 @@ app.addEventListener("input", (event) => {
     return;
   }
   if (!report) return;
+  dismissValidation();
   if (target.matches("[data-row] [data-field]")) {
     updateRow(target);
     return;
@@ -742,6 +747,7 @@ app.addEventListener("input", (event) => {
 app.addEventListener("change", (event) => {
   const target = event.target;
   if (!report || $("#editor-view").hidden) return;
+  dismissValidation();
   if (target.matches("[data-row] [data-field]")) {
     updateRow(target);
     return;
