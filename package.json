@@ -1,0 +1,11 @@
+{
+  "name": "weekly-affiliate-report",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "node --check src/app.js && node --check build.mjs",
+    "preview": "python3 -m http.server 4173 -d dist/static"
+  }
+}
