@@ -1,9 +1,9 @@
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
-const authScreen = $("#auth-screen");
 const app = $("#app");
 const saveState = $("#save-state");
+const STORAGE_KEY = "weekly-affiliate-report:demo:v1";
 
 const listConfig = {
   acquisition: { container: "#acquisition-list", template: "#acquisition-template", stateKey: "acquisition" },
@@ -15,9 +15,17 @@ const listConfig = {
   achievements: { container: "#achievements-list", template: "#compact-template", stateKey: "achievements" },
 };
 
-let workspaceKey = sessionStorage.getItem("war-workspace") || "";
-let report = null;
+const kindLabels = {
+  newAffiliate: "Новый партнёр",
+  newDeal: "Новая сделка",
+  reactivated: "Реактивирован",
+};
+
+let state = loadState();
+let report = state.draft || null;
+let activeReportId = "";
 let saveTimer = null;
+let submitLocked = false;
 
 function id() {
   return crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -39,14 +47,11 @@ function toDateInput(date) {
 
 function blankReport(weekStart = mondayFor()) {
   return {
-    version: 4,
+    id: id(),
+    version: 5,
     weekStart,
     manager: "",
-    metrics: {
-      ftd: "",
-      activeAffiliates: "",
-      searchPlan: "",
-    },
+    metrics: { ftd: "", activeAffiliates: "", searchPlan: "" },
     acquisition: [],
     existing: [],
     problems: [],
@@ -56,74 +61,12 @@ function blankReport(weekStart = mondayFor()) {
     achievements: [],
     noSearch: false,
     noSearchReason: "",
+    noExisting: false,
     noProblems: false,
     noTopProblems: false,
     noAchievements: false,
+    createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-  };
-}
-
-function normalizeReport(value, weekStart) {
-  const base = blankReport(weekStart);
-  if (!value || typeof value !== "object") return base;
-  const sourceMetrics = value.metrics || {};
-
-  return {
-    ...base,
-    manager: typeof value.manager === "string" ? value.manager : "",
-    metrics: {
-      ftd: sourceMetrics.ftd ?? "",
-      activeAffiliates: sourceMetrics.activeAffiliates ?? "",
-      searchPlan: sourceMetrics.searchPlan ?? "",
-    },
-    acquisition: Array.isArray(value.acquisition)
-      ? value.acquisition.map((row) => ({
-          id: row.id || id(),
-          collapsed: row.collapsed !== false,
-          kind: row.kind ?? "",
-          partner: row.partner ?? "",
-          geo: row.geo ?? "",
-          source: row.source ?? "",
-          result: row.result ?? "",
-        }))
-      : [],
-    existing: Array.isArray(value.existing)
-      ? value.existing.map((row) => ({
-          id: row.id || id(),
-          collapsed: row.collapsed !== false,
-          email: row.email ?? row.partner ?? "",
-          geo: row.geo ?? "",
-          movement: row.movement === "grew" || row.movement === "fell" ? row.movement : "",
-          reason: row.reason ?? row.fact ?? "",
-          action: row.action ?? "",
-        }))
-      : [],
-    problems: Array.isArray(value.problems)
-      ? value.problems.map((row) => ({
-          id: row.id || id(),
-          collapsed: row.collapsed !== false,
-          email: row.email ?? row.subject ?? "",
-          problem: row.problem ?? "",
-          resolution: row.resolution ?? row.action ?? "",
-        }))
-      : [],
-    nextWeek: Array.isArray(value.nextWeek)
-      ? value.nextWeek.map((row) => ({
-          id: row.id || id(),
-          collapsed: row.collapsed !== false,
-          plan: row.plan ?? row.action ?? "",
-          update: row.update ?? row.result ?? "",
-        }))
-      : [],
-    priorities: normalizeCompactList(value.priorities),
-    topProblems: normalizeCompactList(value.topProblems),
-    achievements: normalizeCompactList(value.achievements),
-    noSearch: value.noSearch === true,
-    noSearchReason: typeof value.noSearchReason === "string" ? value.noSearchReason : "",
-    noProblems: value.noProblems === true,
-    noTopProblems: value.noTopProblems === true,
-    noAchievements: value.noAchievements === true,
-    weekStart,
   };
 }
 
@@ -132,62 +75,147 @@ function normalizeCompactList(value) {
   return value.map((row) => ({ id: row.id || id(), collapsed: row.collapsed !== false, text: row.text ?? "" }));
 }
 
-async function hashPassword(password) {
-  const bytes = new TextEncoder().encode(`weekly-affiliate-report:${password}`);
-  if (crypto.subtle) {
-    const digest = await crypto.subtle.digest("SHA-256", bytes);
-    return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("").slice(0, 24);
-  }
-  let hash = 2166136261;
-  bytes.forEach((byte) => {
-    hash ^= byte;
-    hash = Math.imul(hash, 16777619);
-  });
-  return Math.abs(hash >>> 0).toString(36);
+function normalizeReport(value, fallbackWeek = mondayFor()) {
+  const base = blankReport(value?.weekStart || fallbackWeek);
+  if (!value || typeof value !== "object") return base;
+  const sourceMetrics = value.metrics || {};
+
+  return {
+    ...base,
+    id: value.id || base.id,
+    weekStart: typeof value.weekStart === "string" ? value.weekStart : fallbackWeek,
+    manager: typeof value.manager === "string" ? value.manager : "",
+    metrics: {
+      ftd: sourceMetrics.ftd ?? "",
+      activeAffiliates: sourceMetrics.activeAffiliates ?? "",
+      searchPlan: sourceMetrics.searchPlan ?? "",
+    },
+    acquisition: Array.isArray(value.acquisition)
+      ? value.acquisition.map((row) => ({
+          id: row.id || id(), collapsed: row.collapsed !== false, kind: row.kind ?? "",
+          partner: row.partner ?? "", geo: row.geo ?? "", source: row.source ?? "", result: row.result ?? "",
+        }))
+      : [],
+    existing: Array.isArray(value.existing)
+      ? value.existing.map((row) => ({
+          id: row.id || id(), collapsed: row.collapsed !== false,
+          email: row.email ?? row.partner ?? "", geo: row.geo ?? "",
+          movement: row.movement === "grew" || row.movement === "fell" ? row.movement : "",
+          reason: row.reason ?? row.fact ?? "", action: row.action ?? "",
+        }))
+      : [],
+    problems: Array.isArray(value.problems)
+      ? value.problems.map((row) => ({
+          id: row.id || id(), collapsed: row.collapsed !== false,
+          email: row.email ?? row.subject ?? "", problem: row.problem ?? "",
+          resolution: row.resolution ?? row.action ?? "",
+        }))
+      : [],
+    nextWeek: Array.isArray(value.nextWeek)
+      ? value.nextWeek.map((row) => ({
+          id: row.id || id(), collapsed: row.collapsed !== false,
+          plan: row.plan ?? row.action ?? "", update: row.update ?? row.result ?? "",
+        }))
+      : [],
+    priorities: normalizeCompactList(value.priorities),
+    topProblems: normalizeCompactList(value.topProblems),
+    achievements: normalizeCompactList(value.achievements),
+    noSearch: value.noSearch === true,
+    noSearchReason: typeof value.noSearchReason === "string" ? value.noSearchReason : "",
+    noExisting: value.noExisting === true,
+    noProblems: value.noProblems === true,
+    noTopProblems: value.noTopProblems === true,
+    noAchievements: value.noAchievements === true,
+    createdAt: value.createdAt || base.createdAt,
+    updatedAt: value.updatedAt || base.updatedAt,
+    status: value.status === "submitted" ? "submitted" : undefined,
+    submittedAt: value.submittedAt || undefined,
+    comments: value.comments && typeof value.comments === "object" ? value.comments : {},
+  };
 }
 
-function storageKey(weekStart = report.weekStart) {
-  return `war:${workspaceKey}:${weekStart}`;
-}
-
-function loadReport(weekStart) {
+function loadState() {
   try {
-    return normalizeReport(JSON.parse(localStorage.getItem(storageKey(weekStart))), weekStart);
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    if (stored && typeof stored === "object") {
+      return {
+        version: 1,
+        draft: stored.draft ? normalizeReport(stored.draft) : null,
+        reports: Array.isArray(stored.reports)
+          ? stored.reports.map((item) => normalizeReport({ ...item, status: "submitted" }))
+          : [],
+      };
+    }
   } catch {
-    return blankReport(weekStart);
+    // Начинаем с чистой демо-версии, если старое локальное состояние повреждено.
   }
+
+  return { version: 1, draft: null, reports: [] };
 }
 
-function persistReport() {
-  if (!report || !workspaceKey) return;
-  report.updatedAt = new Date().toISOString();
+function persistState({ immediate = false } = {}) {
+  if (report) {
+    report.updatedAt = new Date().toISOString();
+    state.draft = report;
+  }
   saveState.textContent = "Сохраняю...";
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    localStorage.setItem(storageKey(), JSON.stringify(report));
+  const save = () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     saveState.textContent = "Все сохранено";
-  }, 250);
+  };
+  if (immediate) save();
+  else saveTimer = setTimeout(save, 220);
 }
 
-function enterApp() {
-  authScreen.hidden = true;
-  app.hidden = false;
-  const week = mondayFor();
-  report = loadReport(week);
-  collapseAllSections();
-  renderReport();
+function short(value, fallback = "") {
+  const text = String(value || "").trim();
+  if (!text) return fallback;
+  return text.length > 100 ? `${text.slice(0, 97)}...` : text;
 }
 
-function leaveApp() {
-  clearTimeout(saveTimer);
-  if (report && workspaceKey) localStorage.setItem(storageKey(), JSON.stringify(report));
-  sessionStorage.removeItem("war-workspace");
-  workspaceKey = "";
-  report = null;
-  app.hidden = true;
-  authScreen.hidden = false;
-  $("#password").value = "";
-  $("#password").focus();
+function countComments(item) {
+  return Object.values(item.comments || {}).filter((value) => String(value || "").trim()).length;
+}
+
+function formatDate(value, options = {}) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat("ru-RU", options).format(date);
+}
+
+function weekRange(weekStart) {
+  const start = new Date(`${weekStart}T12:00:00`);
+  if (Number.isNaN(start.getTime())) return weekStart || "Неделя не указана";
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  const startText = formatDate(start, { day: "2-digit", month: "2-digit" });
+  const endText = formatDate(end, { day: "2-digit", month: "2-digit", year: "numeric" });
+  return `${startText}–${endText}`;
+}
+
+function showView(view) {
+  $("#reports-view").hidden = view !== "reports";
+  $("#editor-view").hidden = view !== "editor";
+  $("#report-detail-view").hidden = view !== "detail";
+  $$('[data-view]').forEach((button) => button.classList.toggle("is-active", button.dataset.view === view));
+  saveState.hidden = view === "reports";
+  if (view === "reports") renderReports();
+  if (view === "editor") {
+    if (!state.draft) {
+      report = blankReport();
+      state.draft = report;
+      persistState({ immediate: true });
+    } else {
+      report = state.draft;
+    }
+    collapseAllSections();
+    renderReport();
+  }
+}
+
+function renderNav() {
+  $("#reports-count").textContent = state.reports.length;
 }
 
 function renderReport() {
@@ -198,6 +226,7 @@ function renderReport() {
   $("#search-plan").value = report.metrics.searchPlan;
   $("#no-search").checked = report.noSearch;
   $("#no-search-reason").value = report.noSearchReason;
+  $("#no-existing").checked = report.noExisting;
   $("#no-problems").checked = report.noProblems;
   $("#no-top-problems").checked = report.noTopProblems;
   $("#no-achievements").checked = report.noAchievements;
@@ -237,26 +266,16 @@ function renderList(type) {
     node.dataset.id = item.id;
     node.classList.toggle("is-collapsed", item.collapsed);
     $("[data-toggle-row]", node)?.setAttribute("aria-expanded", String(!item.collapsed));
-    $$('[data-field]', node).forEach((field) => {
-      field.value = item[field.dataset.field] ?? "";
-    });
+    $$('[data-field]', node).forEach((field) => { field.value = item[field.dataset.field] ?? ""; });
     fillRowSummary(type, item, node);
     container.append(node);
   });
 }
 
-function short(value, fallback = "") {
-  const text = String(value || "").trim();
-  if (!text) return fallback;
-  return text.length > 100 ? `${text.slice(0, 97)}...` : text;
-}
-
 function fillRowSummary(type, item, node) {
   const main = $("[data-summary-main]", node);
   const secondary = $("[data-summary-secondary]", node);
-  const kindLabels = { newAffiliate: "Новый партнёр", newDeal: "Новая сделка", reactivated: "Реактивирован" };
   const compactLabels = { priorities: "Приоритет", topProblems: "Проблема", achievements: "Достижение" };
-
   if (type === "acquisition") {
     main.textContent = [kindLabels[item.kind] || "Тип не выбран", short(item.partner, "Партнёр не указан"), short(item.geo), short(item.source)].filter(Boolean).join(" · ");
     secondary.textContent = short(item.result, "Статус не заполнен");
@@ -300,14 +319,13 @@ function addRow(type) {
         : type === "nextWeek"
           ? { plan: "", update: "" }
           : { text: "" };
-
   report[stateKey].push({ id: id(), collapsed: false, ...fields });
   renderList(type);
   renderAcquisitionSummary();
   renderMovementSummary();
   const container = $(listConfig[type].container);
-  $('[data-row]:last-child [data-field]', container)?.focus();
-  persistReport();
+  $("[data-row]:last-child [data-field]", container)?.focus();
+  persistState();
 }
 
 function removeRow(type, rowId) {
@@ -316,7 +334,7 @@ function removeRow(type, rowId) {
   renderList(type);
   renderAcquisitionSummary();
   renderMovementSummary();
-  persistReport();
+  persistState();
 }
 
 function updateRow(target) {
@@ -327,10 +345,11 @@ function updateRow(target) {
   const item = report[stateKey].find((candidate) => candidate.id === row.dataset.id);
   if (!item) return;
   item[target.dataset.field] = target.value;
+  target.classList.remove("is-invalid");
   fillRowSummary(type, item, row);
   if (type === "acquisition") renderAcquisitionSummary();
   if (type === "existing") renderMovementSummary();
-  persistReport();
+  persistState();
 }
 
 function setRowCollapsed(row, collapsed) {
@@ -350,7 +369,7 @@ function setRowCollapsed(row, collapsed) {
   row.classList.toggle("is-collapsed", collapsed);
   $("[data-toggle-row]", row)?.setAttribute("aria-expanded", String(!collapsed));
   if (!collapsed) $("[data-field]", row)?.focus();
-  persistReport();
+  persistState();
 }
 
 function closeHelp(exceptId = "") {
@@ -362,21 +381,344 @@ function closeHelp(exceptId = "") {
   });
 }
 
-$("#auth-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const password = $("#password").value;
-  if (password.length < 4) {
-    $("#auth-error").textContent = "Минимум 4 символа.";
+function addValidationError(errors, message, selector, sectionIndex) {
+  errors.push({ message, selector, sectionIndex });
+}
+
+function validateRows(errors, type, rows, fields, sectionIndex) {
+  rows.forEach((row, index) => {
+    fields.forEach(({ key, label, rule }) => {
+      const value = String(row[key] ?? "").trim();
+      if (!value || (rule && !rule(value))) {
+        addValidationError(errors, `${label}, строка ${index + 1}`, `[data-type="${type}"][data-id="${row.id}"] [data-field="${key}"]`, sectionIndex);
+      }
+    });
+  });
+}
+
+function validateReport() {
+  const errors = [];
+  const hasValue = (value) => String(value ?? "").trim() !== "";
+  const isGeo = (value) => /^[A-Za-z]{2}$/.test(value);
+  if (!hasValue(report.weekStart)) addValidationError(errors, "Неделя", "#week-start", -1);
+  if (!hasValue(report.manager)) addValidationError(errors, "Менеджер", "#manager-name", -1);
+  if (!hasValue(report.metrics.ftd)) addValidationError(errors, "FTD", "#ftd", 0);
+  if (!hasValue(report.metrics.activeAffiliates)) addValidationError(errors, "Активные партнёры", "#active-affiliates", 0);
+
+  if (!report.acquisition.length && !report.noSearch) {
+    addValidationError(errors, "Добавь результат привлечения или отметь «Поиском не занимался»", "#no-search", 1);
+  }
+  if (report.noSearch && !hasValue(report.noSearchReason)) {
+    addValidationError(errors, "Чем был занят вместо поиска", "#no-search-reason", 1);
+  }
+  validateRows(errors, "acquisition", report.acquisition, [
+    { key: "kind", label: "Тип привлечения" },
+    { key: "partner", label: "Почта / партнёр" },
+    { key: "geo", label: "GEO из двух букв", rule: isGeo },
+    { key: "source", label: "Источник" },
+    { key: "result", label: "Статус" },
+  ], 1);
+
+  if (!report.noExisting && !report.existing.length) {
+    addValidationError(errors, "Добавь изменение текущего партнёра или отметь «Изменений нет»", "#no-existing", 2);
+  }
+  if (!report.noExisting) {
+    validateRows(errors, "existing", report.existing, [
+      { key: "email", label: "Почта текущего партнёра" },
+      { key: "geo", label: "GEO из двух букв", rule: isGeo },
+      { key: "movement", label: "Изменение" },
+      { key: "reason", label: "Причина изменения" },
+      { key: "action", label: "Что делаем" },
+    ], 2);
+  }
+
+  if (!report.noProblems && !report.problems.length) {
+    addValidationError(errors, "Добавь проблему или отметь «Проблем нет»", "#no-problems", 3);
+  }
+  if (!report.noProblems) {
+    validateRows(errors, "problems", report.problems, [
+      { key: "email", label: "Почта партнёра в проблеме" },
+      { key: "problem", label: "Описание проблемы" },
+      { key: "resolution", label: "Решение / статус" },
+    ], 3);
+  }
+
+  if (!hasValue(report.metrics.searchPlan)) addValidationError(errors, "План по поиску", "#search-plan", 4);
+  if (!report.nextWeek.length) addValidationError(errors, "Добавь хотя бы один пункт на следующую неделю", '[data-add="nextWeek"]', 4);
+  validateRows(errors, "nextWeek", report.nextWeek, [{ key: "plan", label: "План на следующую неделю" }], 4);
+
+  if (!report.priorities.length) addValidationError(errors, "Добавь хотя бы один приоритет", '[data-add="priorities"]', 5);
+  validateRows(errors, "priorities", report.priorities, [{ key: "text", label: "Приоритет" }], 5);
+  if (!report.noTopProblems && !report.topProblems.length) {
+    addValidationError(errors, "Добавь топ-проблему или отметь «Проблем нет»", "#no-top-problems", 5);
+  }
+  if (!report.noTopProblems) validateRows(errors, "topProblems", report.topProblems, [{ key: "text", label: "Топ-проблема" }], 5);
+  if (!report.noAchievements && !report.achievements.length) {
+    addValidationError(errors, "Добавь достижение или отметь «Достижений нет»", "#no-achievements", 5);
+  }
+  if (!report.noAchievements) validateRows(errors, "achievements", report.achievements, [{ key: "text", label: "Достижение" }], 5);
+  return errors;
+}
+
+function showValidation(errors) {
+  $$(".is-invalid", $("#editor-view")).forEach((element) => element.classList.remove("is-invalid"));
+  const summary = $("#validation-summary");
+  const list = $("#validation-list");
+  list.replaceChildren();
+  if (!errors.length) {
+    summary.hidden = true;
     return;
   }
-  $("#auth-error").textContent = "";
-  workspaceKey = await hashPassword(password);
-  sessionStorage.setItem("war-workspace", workspaceKey);
-  enterApp();
-});
+  errors.forEach((error) => {
+    const item = document.createElement("li");
+    item.textContent = error.message;
+    list.append(item);
+    $(error.selector)?.classList.add("is-invalid");
+  });
+  summary.hidden = false;
+  const first = errors[0];
+  const cards = $$('[data-section-card]');
+  if (first.sectionIndex >= 0 && cards[first.sectionIndex]) collapseAllSections(cards[first.sectionIndex]);
+  const target = $(first.selector);
+  const row = target?.closest("[data-row]");
+  if (row?.classList.contains("is-collapsed")) setRowCollapsed(row, false);
+  target?.focus();
+  summary.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function submitReport() {
+  if (submitLocked) return;
+  submitLocked = true;
+  const errors = validateReport();
+  showValidation(errors);
+  if (errors.length) {
+    submitLocked = false;
+    return;
+  }
+  clearTimeout(saveTimer);
+  const snapshot = JSON.parse(JSON.stringify(report));
+  snapshot.status = "submitted";
+  snapshot.submittedAt = new Date().toISOString();
+  snapshot.updatedAt = snapshot.submittedAt;
+  snapshot.comments = {};
+  if (snapshot.noExisting) snapshot.existing = [];
+  if (snapshot.noProblems) snapshot.problems = [];
+  if (snapshot.noTopProblems) snapshot.topProblems = [];
+  if (snapshot.noAchievements) snapshot.achievements = [];
+  state.reports.unshift(snapshot);
+  state.draft = null;
+  report = null;
+  activeReportId = snapshot.id;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  saveState.textContent = "Все сохранено";
+  renderNav();
+  renderReports();
+  renderSubmittedReport(snapshot);
+  showView("detail");
+  submitLocked = false;
+}
+
+function makeElement(tag, className = "", text = "") {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== "") node.textContent = text;
+  return node;
+}
+
+function renderReports() {
+  const list = $("#reports-list");
+  const empty = $("#reports-empty");
+  list.replaceChildren();
+  empty.hidden = state.reports.length > 0;
+  renderNav();
+  [...state.reports]
+    .sort((a, b) => String(b.submittedAt).localeCompare(String(a.submittedAt)))
+    .forEach((item) => {
+      const button = makeElement("button", "report-list-item");
+      button.type = "button";
+      button.dataset.openReport = item.id;
+      const main = makeElement("span", "report-list-main");
+      main.append(makeElement("strong", "", item.manager || "Менеджер не указан"));
+      main.append(makeElement("span", "", `Неделя ${weekRange(item.weekStart)}`));
+      const metrics = makeElement("span", "report-list-metrics");
+      metrics.append(makeElement("span", "", `FTD ${item.metrics.ftd}`));
+      metrics.append(makeElement("span", "", `${item.metrics.activeAffiliates} активных`));
+      const meta = makeElement("span", "report-list-meta");
+      meta.append(makeElement("span", "", `Отправлен ${formatDate(item.submittedAt, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}`));
+      const comments = countComments(item);
+      if (comments) meta.append(makeElement("span", "comment-count", `${comments} комм.`));
+      meta.append(makeElement("span", "report-arrow", "→"));
+      button.append(main, metrics, meta);
+      list.append(button);
+    });
+}
+
+function noteControl(item, target, label = "Комментарий") {
+  const value = String(item.comments?.[target] || "");
+  const wrap = makeElement("div", `review-note${value.trim() ? " has-note" : ""}`);
+  wrap.dataset.noteTarget = target;
+  const toggle = makeElement("button", "note-toggle", value.trim() ? label : `+ ${label.toLowerCase()}`);
+  toggle.type = "button";
+  toggle.dataset.noteToggle = target;
+  toggle.dataset.noteLabel = label;
+  toggle.setAttribute("aria-expanded", "false");
+  const editor = makeElement("div", "note-editor");
+  editor.hidden = true;
+  const textarea = makeElement("textarea", "note-input");
+  textarea.rows = 2;
+  textarea.placeholder = "Оставь вопрос, правку или комментарий";
+  textarea.value = value;
+  textarea.dataset.noteInput = target;
+  const hint = makeElement("small", "", "Жёлтая заметка сохраняется автоматически");
+  editor.append(textarea, hint);
+  wrap.append(toggle, editor);
+  return wrap;
+}
+
+function detailValue(item, label, value, target) {
+  const block = makeElement("div", `detail-value${item.comments?.[target]?.trim() ? " has-note" : ""}`);
+  block.append(makeElement("span", "detail-label", label));
+  block.append(makeElement("strong", "detail-value-text", String(value ?? "").trim() || "—"));
+  block.append(noteControl(item, target));
+  return block;
+}
+
+function detailRow(item, title, meta, lines, target) {
+  const row = makeElement("div", `detail-row${item.comments?.[target]?.trim() ? " has-note" : ""}`);
+  const heading = makeElement("div", "detail-row-heading");
+  heading.append(makeElement("strong", "", title || "—"));
+  if (meta) heading.append(makeElement("span", "", meta));
+  row.append(heading);
+  lines.filter((line) => line.value !== undefined && line.value !== "").forEach((line) => {
+    const text = makeElement("p", "detail-row-line");
+    text.append(makeElement("span", "", `${line.label}: `));
+    text.append(document.createTextNode(String(line.value)));
+    row.append(text);
+  });
+  row.append(noteControl(item, target));
+  return row;
+}
+
+function detailSection(item, number, title, target) {
+  const section = makeElement("section", `submitted-section${item.comments?.[target]?.trim() ? " has-note" : ""}`);
+  const heading = makeElement("div", "submitted-section-heading");
+  heading.append(makeElement("span", "section-number", number), makeElement("h3", "", title));
+  heading.append(noteControl(item, target, "Комментарий к разделу"));
+  section.append(heading);
+  return section;
+}
+
+function emptyDetail(text) {
+  return makeElement("p", "detail-empty", text);
+}
+
+function renderSubmittedReport(item) {
+  activeReportId = item.id;
+  const root = $("#report-detail");
+  root.replaceChildren();
+  $("#detail-status").textContent = `Отправлен ${formatDate(item.submittedAt, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}`;
+  const sheet = makeElement("article", "submitted-sheet");
+  const header = makeElement("header", "submitted-header");
+  const titleBlock = makeElement("div");
+  titleBlock.append(makeElement("p", "eyebrow", "Weekly Affiliate Report"));
+  titleBlock.append(makeElement("h2", "", item.manager || "Менеджер не указан"));
+  titleBlock.append(makeElement("p", "submitted-period", `Неделя ${weekRange(item.weekStart)}`));
+  header.append(titleBlock, noteControl(item, "report:general", "Комментарий к отчёту"));
+  sheet.append(header);
+
+  const results = detailSection(item, "01", "Результат недели", "section:results");
+  const resultGrid = makeElement("div", "detail-metrics");
+  resultGrid.append(
+    detailValue(item, "FTD", item.metrics.ftd, "result:ftd"),
+    detailValue(item, "Активные партнёры", item.metrics.activeAffiliates, "result:active"),
+  );
+  results.append(resultGrid);
+  sheet.append(results);
+
+  const acquisition = detailSection(item, "02", "Привлечение", "section:acquisition");
+  const acquisitionCounts = makeElement("div", "detail-metrics detail-metrics-three");
+  const filled = item.acquisition.filter((row) => row.partner && row.kind);
+  acquisitionCounts.append(
+    detailValue(item, "Новые партнёры", filled.filter((row) => row.kind === "newAffiliate").length, "acquisition:new"),
+    detailValue(item, "Новые сделки", filled.filter((row) => row.kind === "newDeal").length, "acquisition:deals"),
+    detailValue(item, "Реактивированы", filled.filter((row) => row.kind === "reactivated").length, "acquisition:reactivated"),
+  );
+  acquisition.append(acquisitionCounts);
+  if (item.noSearch) acquisition.append(detailRow(item, "Поиском не занимался", "", [{ label: "Чем был занят", value: item.noSearchReason }], "acquisition:no-search"));
+  item.acquisition.forEach((row) => {
+    acquisition.append(detailRow(item, row.partner, `${kindLabels[row.kind] || "Тип не указан"} · ${row.geo} · ${row.source}`, [{ label: "Статус", value: row.result }], `acquisition:${row.id}`));
+  });
+  if (!item.acquisition.length && !item.noSearch) acquisition.append(emptyDetail("Данные не указаны."));
+  sheet.append(acquisition);
+
+  const existing = detailSection(item, "03", "Текущие партнёры", "section:existing");
+  if (item.noExisting) existing.append(emptyDetail("Изменений по текущим партнёрам нет."));
+  else if (!item.existing.length) existing.append(emptyDetail("Данные не указаны."));
+  item.existing.forEach((row) => {
+    existing.append(detailRow(item, row.email, `${row.geo} · ${row.movement === "grew" ? "Рост" : "Падение"}`, [{ label: "Причина", value: row.reason }, { label: "Что делаем", value: row.action }], `existing:${row.id}`));
+  });
+  sheet.append(existing);
+
+  const problems = detailSection(item, "04", "Проблемы", "section:problems");
+  if (item.noProblems) problems.append(emptyDetail("Проблем нет."));
+  else item.problems.forEach((row) => {
+    problems.append(detailRow(item, row.email, "", [{ label: "Проблема", value: row.problem }, { label: "Решение / статус", value: row.resolution }], `problem:${row.id}`));
+  });
+  sheet.append(problems);
+
+  const nextWeek = detailSection(item, "05", "Следующая неделя", "section:next-week");
+  nextWeek.append(detailValue(item, "План по поиску", item.metrics.searchPlan, "next-week:search-plan"));
+  item.nextWeek.forEach((row) => {
+    nextWeek.append(detailRow(item, row.plan, "", row.update ? [{ label: "Апдейт", value: row.update }] : [], `next-week:${row.id}`));
+  });
+  sheet.append(nextWeek);
+
+  const summary = detailSection(item, "06", "Главное за неделю", "section:summary");
+  const summaryGrid = makeElement("div", "detail-summary-grid");
+  const groups = [
+    { title: "Приоритеты", rows: item.priorities, prefix: "priority", empty: "Не указаны" },
+    { title: "Топ проблем", rows: item.topProblems, prefix: "top-problem", empty: item.noTopProblems ? "Проблем нет" : "Не указаны" },
+    { title: "Достижения", rows: item.achievements, prefix: "achievement", empty: item.noAchievements ? "Достижений нет" : "Не указаны" },
+  ];
+  groups.forEach((group) => {
+    const column = makeElement("div", "detail-summary-column");
+    column.append(makeElement("h4", "", group.title));
+    if (!group.rows.length) column.append(emptyDetail(group.empty));
+    group.rows.forEach((row, index) => {
+      column.append(detailRow(item, `${index + 1}. ${row.text}`, "", [], `${group.prefix}:${row.id}`));
+    });
+    summaryGrid.append(column);
+  });
+  summary.append(summaryGrid);
+  sheet.append(summary);
+  root.append(sheet);
+}
+
+function updateComment(target) {
+  const item = state.reports.find((candidate) => candidate.id === activeReportId);
+  if (!item) return;
+  item.comments ||= {};
+  item.comments[target.dataset.noteInput] = target.value;
+  const wrap = target.closest(".review-note");
+  const hasValue = target.value.trim() !== "";
+  wrap.classList.toggle("has-note", hasValue);
+  wrap.closest(".detail-row, .detail-value, .submitted-section")?.classList.toggle("has-note", hasValue);
+  const toggle = $("[data-note-toggle]", wrap);
+  if (toggle) {
+    const label = toggle.dataset.noteLabel || "Комментарий";
+    toggle.textContent = hasValue ? label : `+ ${label.toLowerCase()}`;
+  }
+  persistState();
+  renderNav();
+}
 
 app.addEventListener("input", (event) => {
   const target = event.target;
+  if (target.matches("[data-note-input]")) {
+    updateComment(target);
+    return;
+  }
+  if (!report) return;
   if (target.matches("[data-row] [data-field]")) {
     updateRow(target);
     return;
@@ -392,27 +734,27 @@ app.addEventListener("input", (event) => {
   if (!path) return;
   if (path.length === 1) report[path[0]] = target.value;
   else report[path[0]][path[1]] = target.value;
+  target.classList.remove("is-invalid");
   if (target.id === "no-search-reason") renderOptionalFields();
-  persistReport();
+  persistState();
 });
 
 app.addEventListener("change", (event) => {
   const target = event.target;
+  if (!report || $("#editor-view").hidden) return;
   if (target.matches("[data-row] [data-field]")) {
     updateRow(target);
     return;
   }
   if (target.id === "week-start") {
-    clearTimeout(saveTimer);
-    localStorage.setItem(storageKey(), JSON.stringify(report));
-    report = loadReport(target.value);
-    collapseAllSections();
-    renderReport();
+    report.weekStart = target.value;
+    target.classList.remove("is-invalid");
+    persistState();
     return;
   }
-
   const checkboxBindings = {
     "no-search": "noSearch",
+    "no-existing": "noExisting",
     "no-problems": "noProblems",
     "no-top-problems": "noTopProblems",
     "no-achievements": "noAchievements",
@@ -420,12 +762,41 @@ app.addEventListener("change", (event) => {
   const key = checkboxBindings[target.id];
   if (!key) return;
   report[key] = target.checked;
+  target.classList.remove("is-invalid");
   renderOptionalFields();
-  persistReport();
+  persistState();
   if (target.id === "no-search" && target.checked) $("#no-search-reason").focus();
 });
 
 app.addEventListener("click", (event) => {
+  const viewButton = event.target.closest("[data-view]");
+  if (viewButton) {
+    showView(viewButton.dataset.view);
+    return;
+  }
+  const openReport = event.target.closest("[data-open-report]");
+  if (openReport) {
+    const item = state.reports.find((candidate) => candidate.id === openReport.dataset.openReport);
+    if (item) {
+      renderSubmittedReport(item);
+      showView("detail");
+    }
+    return;
+  }
+  const noteToggle = event.target.closest("[data-note-toggle]");
+  if (noteToggle) {
+    const wrap = noteToggle.closest(".review-note");
+    const editor = $(".note-editor", wrap);
+    editor.hidden = !editor.hidden;
+    noteToggle.setAttribute("aria-expanded", String(!editor.hidden));
+    if (!editor.hidden) $("textarea", editor)?.focus();
+    return;
+  }
+  if (event.target.closest("#submit-report")) {
+    submitReport();
+    return;
+  }
+  if (!report) return;
   const helpButton = event.target.closest("[data-help]");
   if (helpButton) {
     const helpId = helpButton.dataset.help;
@@ -433,9 +804,7 @@ app.addEventListener("click", (event) => {
     closeHelp(willOpen ? helpId : "");
     return;
   }
-
   if (!event.target.closest(".help-popover")) closeHelp();
-
   const sectionToggle = event.target.closest("[data-toggle-section]");
   if (sectionToggle) {
     const card = sectionToggle.closest("[data-section-card]");
@@ -444,26 +813,22 @@ app.addEventListener("click", (event) => {
     closeHelp();
     return;
   }
-
   const rowToggle = event.target.closest("[data-toggle-row]");
   if (rowToggle) {
     const row = rowToggle.closest("[data-row]");
     setRowCollapsed(row, !row.classList.contains("is-collapsed"));
     return;
   }
-
   const collapseButton = event.target.closest("[data-collapse-row]");
   if (collapseButton) {
     setRowCollapsed(collapseButton.closest("[data-row]"), true);
     return;
   }
-
   const addButton = event.target.closest("[data-add]");
   if (addButton) {
     addRow(addButton.dataset.add);
     return;
   }
-
   const removeButton = event.target.closest("[data-remove]");
   if (removeButton) {
     const row = removeButton.closest("[data-row]");
@@ -475,6 +840,14 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closeHelp();
 });
 
-$("#logout").addEventListener("click", leaveApp);
-
-if (workspaceKey) enterApp();
+renderNav();
+if (state.draft) {
+  collapseAllSections();
+  renderReport();
+  showView("editor");
+} else if (state.reports.length) {
+  renderReports();
+  showView("reports");
+} else {
+  showView("editor");
+}

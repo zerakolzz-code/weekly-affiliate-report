@@ -8,25 +8,7 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <div id="auth-screen" class="auth-screen">
-      <main class="auth-card">
-        <div class="brand-mark">WR</div>
-        <p class="eyebrow">Weekly Affiliate Report</p>
-        <h1>Открой свой отчёт</h1>
-        <p class="auth-copy">У каждого сотрудника свой пароль и свои данные. Логин не нужен.</p>
-        <form id="auth-form" class="auth-form">
-          <label for="password">Пароль</label>
-          <div class="password-row">
-            <input id="password" name="password" type="password" autocomplete="current-password" minlength="4" placeholder="Введите пароль" required />
-            <button class="button button-primary" type="submit">Войти</button>
-          </div>
-          <p id="auth-error" class="field-error" aria-live="polite"></p>
-        </form>
-        <p class="demo-note">Демо-версия. Данные хранятся только в этом браузере. Для реальной работы нужен сервер и нормальная авторизация.</p>
-      </main>
-    </div>
-
-    <div id="app" class="app" hidden>
+    <div id="app" class="app">
       <header class="topbar">
         <div class="topbar-brand">
           <span class="brand-mark brand-mark-small">WR</span>
@@ -35,14 +17,48 @@
             <h1>Еженедельный отчёт</h1>
           </div>
         </div>
+        <nav class="main-nav" aria-label="Разделы">
+          <button class="nav-button" type="button" data-view="reports">Отчёты <span id="reports-count" class="nav-count">0</span></button>
+          <button class="nav-button is-active" type="button" data-view="editor">Создать новый отчёт</button>
+        </nav>
         <div class="topbar-actions">
           <span id="save-state" class="save-state">Все сохранено</span>
-          <button id="logout" class="button button-quiet" type="button">Выйти</button>
         </div>
       </header>
 
       <main class="workspace">
-        <section class="report-column">
+        <section id="reports-view" class="view" hidden>
+          <div class="view-heading">
+            <div>
+              <p class="eyebrow">Архив</p>
+              <h2>Отправленные отчёты</h2>
+              <p>Здесь лежат готовые отчёты и комментарии к ним.</p>
+            </div>
+            <button class="button button-primary" type="button" data-view="editor">+ Создать новый отчёт</button>
+          </div>
+          <div id="reports-list" class="reports-list"></div>
+          <div id="reports-empty" class="empty-state">
+            <strong>Отчётов пока нет</strong>
+            <p>Создай тестовый отчёт, отправь его и он появится здесь.</p>
+          </div>
+        </section>
+
+        <section id="report-detail-view" class="view" hidden>
+          <div class="detail-toolbar">
+            <button class="button button-quiet" type="button" data-view="reports">← К отчётам</button>
+            <span id="detail-status" class="submitted-badge">Отправлен</span>
+          </div>
+          <div id="report-detail"></div>
+        </section>
+
+        <section id="editor-view" class="view">
+          <div id="validation-summary" class="validation-summary" role="alert" hidden>
+            <strong>Отчёт не отправлен</strong>
+            <p>Заполни отмеченные поля:</p>
+            <ul id="validation-list"></ul>
+          </div>
+
+          <div class="report-column">
           <div class="report-heading">
             <div>
               <label class="field-label" for="week-start">Неделя</label>
@@ -115,12 +131,15 @@
               </div>
             </div>
             <div class="section-body">
-              <div class="movement-summary">
-                <span><strong id="grown-count">0</strong> выросли</span>
-                <span><strong id="fallen-count">0</strong> упали</span>
+              <label class="empty-option"><input id="no-existing" type="checkbox" /> Изменений нет</label>
+              <div data-optional-content="noExisting">
+                <div class="movement-summary list-with-offset">
+                  <span><strong id="grown-count">0</strong> выросли</span>
+                  <span><strong id="fallen-count">0</strong> упали</span>
+                </div>
+                <div id="existing-list" class="dynamic-list"></div>
+                <button class="button button-add" data-add="existing" type="button">+ Добавить изменение</button>
               </div>
-              <div id="existing-list" class="dynamic-list"></div>
-              <button class="button button-add" data-add="existing" type="button">+ Добавить изменение</button>
             </div>
           </article>
 
@@ -201,6 +220,15 @@
               </div>
             </div>
           </article>
+          </div>
+
+          <div class="submit-bar">
+            <div>
+              <strong>Готово?</strong>
+              <p>После отправки отчёт появится во вкладке «Отчёты». Содержание фиксируется, комментарии можно добавлять позже.</p>
+            </div>
+            <button id="submit-report" class="button button-primary button-submit" type="button">Отправить отчёт</button>
+          </div>
         </section>
       </main>
     </div>
