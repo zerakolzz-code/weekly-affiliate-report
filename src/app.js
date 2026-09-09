@@ -48,7 +48,7 @@ function toDateInput(date) {
 function blankReport(weekStart = mondayFor()) {
   return {
     id: id(),
-    version: 5,
+    version: 6,
     weekStart,
     manager: "",
     metrics: { ftd: "", activeAffiliates: "", searchPlan: "" },
@@ -73,6 +73,31 @@ function blankReport(weekStart = mondayFor()) {
 function normalizeCompactList(value) {
   if (!Array.isArray(value)) return [];
   return value.map((row) => ({ id: row.id || id(), collapsed: row.collapsed !== false, text: row.text ?? "" }));
+}
+
+function normalizeComments(value, fallbackCreatedAt) {
+  if (!value || typeof value !== "object") return {};
+  const comments = {};
+
+  Object.entries(value).forEach(([target, rawThread]) => {
+    const rawMessages = Array.isArray(rawThread)
+      ? rawThread
+      : typeof rawThread === "string" && rawThread.trim()
+        ? [{ text: rawThread, author: "Без имени", createdAt: fallbackCreatedAt }]
+        : [];
+    const messages = rawMessages
+      .filter((message) => message && typeof message === "object" && String(message.text || "").trim())
+      .map((message) => ({
+        id: message.id || id(),
+        author: String(message.author || "Без имени").trim() || "Без имени",
+        text: String(message.text || "").trim(),
+        createdAt: message.createdAt || fallbackCreatedAt || new Date().toISOString(),
+        replyTo: typeof message.replyTo === "string" ? message.replyTo : "",
+      }));
+    if (messages.length) comments[target] = messages;
+  });
+
+  return comments;
 }
 
 function normalizeReport(value, fallbackWeek = mondayFor()) {
@@ -130,7 +155,7 @@ function normalizeReport(value, fallbackWeek = mondayFor()) {
     updatedAt: value.updatedAt || base.updatedAt,
     status: value.status === "submitted" ? "submitted" : undefined,
     submittedAt: value.submittedAt || undefined,
-    comments: value.comments && typeof value.comments === "object" ? value.comments : {},
+    comments: normalizeComments(value.comments, value.submittedAt || value.updatedAt || base.updatedAt),
   };
 }
 
@@ -138,19 +163,31 @@ function loadState() {
   try {
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY));
     if (stored && typeof stored === "object") {
-      return {
+      const normalizedState = {
         version: 1,
         draft: stored.draft ? normalizeReport(stored.draft) : null,
         reports: Array.isArray(stored.reports)
           ? stored.reports.map((item) => normalizeReport({ ...item, status: "submitted" }))
           : [],
+        commentAuthor: typeof stored.commentAuthor === "string" ? stored.commentAuthor : "",
       };
+      const reportsToCheck = [stored.draft, ...(Array.isArray(stored.reports) ? stored.reports : [])].filter(Boolean);
+      const hasLegacyComments = reportsToCheck.some((item) => Object.values(item.comments || {})
+        .some((thread) => typeof thread === "string" && thread.trim()));
+      if (hasLegacyComments) {
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizedState));
+        } catch {
+          // Отчёт всё равно откроется; повторим сохранение при следующем изменении.
+        }
+      }
+      return normalizedState;
     }
   } catch {
     // Начинаем с чистой демо-версии, если старое локальное состояние повреждено.
   }
 
-  return { version: 1, draft: null, reports: [] };
+  return { version: 1, draft: null, reports: [], commentAuthor: "" };
 }
 
 function persistState({ immediate = false } = {}) {
@@ -161,11 +198,18 @@ function persistState({ immediate = false } = {}) {
   saveState.textContent = "Сохраняю...";
   clearTimeout(saveTimer);
   const save = () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    saveState.textContent = "Все сохранено";
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      saveState.textContent = "Все сохранено";
+      return true;
+    } catch {
+      saveState.textContent = "Не удалось сохранить";
+      return false;
+    }
   };
-  if (immediate) save();
-  else saveTimer = setTimeout(save, 220);
+  if (immediate) return save();
+  saveTimer = setTimeout(save, 220);
+  return true;
 }
 
 function short(value, fallback = "") {
@@ -174,8 +218,16 @@ function short(value, fallback = "") {
   return text.length > 100 ? `${text.slice(0, 97)}...` : text;
 }
 
+function commentsFor(item, target) {
+  const thread = item.comments?.[target];
+  return Array.isArray(thread) ? thread : [];
+}
+
 function countComments(item) {
-  return Object.values(item.comments || {}).filter((value) => String(value || "").trim()).length;
+  return Object.values(item.comments || {}).reduce(
+    (total, thread) => total + (Array.isArray(thread) ? thread.length : 0),
+    0,
+  );
 }
 
 function formatDate(value, options = {}) {
@@ -545,8 +597,15 @@ function renderReports() {
       main.append(makeElement("strong", "", item.manager || "Менеджер не указан"));
       main.append(makeElement("span", "", `Неделя ${weekRange(item.weekStart)}`));
       const metrics = makeElement("span", "report-list-metrics");
+      const filled = item.acquisition.filter((row) => String(row.partner || "").trim() && row.kind);
+      const newAffiliates = filled.filter((row) => row.kind === "newAffiliate").length;
+      const newDeals = filled.filter((row) => row.kind === "newDeal").length;
+      const reactivated = filled.filter((row) => row.kind === "reactivated").length;
       metrics.append(makeElement("span", "", `FTD ${item.metrics.ftd}`));
-      metrics.append(makeElement("span", "", `${item.metrics.activeAffiliates} активных`));
+      metrics.append(makeElement("span", "", `Активные ${item.metrics.activeAffiliates}`));
+      metrics.append(makeElement("span", "", `Новые партнёры ${newAffiliates}`));
+      metrics.append(makeElement("span", "", `Новые сделки ${newDeals}`));
+      metrics.append(makeElement("span", "", `Реактивации ${reactivated}`));
       const meta = makeElement("span", "report-list-meta");
       meta.append(makeElement("span", "", `Отправлен ${formatDate(item.submittedAt, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}`));
       const comments = countComments(item);
@@ -558,29 +617,92 @@ function renderReports() {
 }
 
 function noteControl(item, target, label = "Комментарий") {
-  const value = String(item.comments?.[target] || "");
-  const wrap = makeElement("div", `review-note${value.trim() ? " has-note" : ""}`);
+  const messages = commentsFor(item, target);
+  const wrap = makeElement("div", `review-note${messages.length ? " has-note" : ""}`);
   wrap.dataset.noteTarget = target;
-  const toggle = makeElement("button", "note-toggle", value.trim() ? label : `+ ${label.toLowerCase()}`);
+  wrap.dataset.noteLabel = label;
+  const toggleText = messages.length ? `${messages.length} комм.` : `+ ${label.toLowerCase()}`;
+  const toggle = makeElement("button", "note-toggle", toggleText);
   toggle.type = "button";
   toggle.dataset.noteToggle = target;
-  toggle.dataset.noteLabel = label;
   toggle.setAttribute("aria-expanded", "false");
   const editor = makeElement("div", "note-editor");
   editor.hidden = true;
-  const textarea = makeElement("textarea", "note-input");
+
+  if (messages.length) {
+    const thread = makeElement("div", "thread-list");
+    messages.forEach((message) => {
+      const card = makeElement("article", `thread-message${message.replyTo ? " is-reply" : ""}`);
+      card.dataset.commentId = message.id;
+      const header = makeElement("div", "thread-message-header");
+      header.append(makeElement("strong", "", message.author || "Без имени"));
+      header.append(makeElement("time", "", formatDate(message.createdAt, {
+        day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
+      })));
+      card.append(header);
+      if (message.replyTo) {
+        const parent = messages.find((candidate) => candidate.id === message.replyTo);
+        if (parent) {
+          card.append(makeElement(
+            "div",
+            "thread-reply-context",
+            `Ответ на ${parent.author}: ${short(parent.text, "сообщение")}`,
+          ));
+        }
+      }
+      card.append(makeElement("p", "", message.text));
+      const reply = makeElement("button", "thread-reply-button", "Ответить");
+      reply.type = "button";
+      reply.dataset.replyMessage = message.id;
+      reply.dataset.noteTarget = target;
+      card.append(reply);
+      thread.append(card);
+    });
+    editor.append(thread);
+  }
+
+  const composer = makeElement("div", "thread-composer");
+  composer.dataset.commentComposer = target;
+  composer.dataset.replyTo = "";
+  const replyingTo = makeElement("div", "thread-replying-to");
+  replyingTo.dataset.replyingTo = "";
+  replyingTo.hidden = true;
+  const replyText = makeElement("span", "");
+  replyText.dataset.replyingText = "";
+  const cancelReply = makeElement("button", "thread-cancel-reply", "Отменить ответ");
+  cancelReply.type = "button";
+  cancelReply.dataset.cancelReply = "";
+  replyingTo.append(replyText, cancelReply);
+
+  const fields = makeElement("div", "thread-fields");
+  const author = makeElement("input", "thread-author");
+  author.type = "text";
+  author.placeholder = "Кто пишет";
+  author.value = state.commentAuthor || "";
+  author.dataset.commentAuthor = "";
+  author.setAttribute("aria-label", "Кто пишет комментарий");
+  const textarea = makeElement("textarea", "thread-input");
   textarea.rows = 2;
-  textarea.placeholder = "Оставь вопрос, правку или комментарий";
-  textarea.value = value;
-  textarea.dataset.noteInput = target;
-  const hint = makeElement("small", "", "Жёлтая заметка сохраняется автоматически");
-  editor.append(textarea, hint);
+  textarea.placeholder = "Вопрос, правка или ответ";
+  textarea.dataset.commentText = target;
+  textarea.setAttribute("aria-label", "Текст комментария");
+  fields.append(author, textarea);
+
+  const actions = makeElement("div", "thread-composer-actions");
+  const error = makeElement("span", "thread-error");
+  error.dataset.commentError = "";
+  const add = makeElement("button", "button button-primary thread-add", "Добавить");
+  add.type = "button";
+  add.dataset.addComment = target;
+  actions.append(error, add);
+  composer.append(replyingTo, fields, actions);
+  editor.append(composer);
   wrap.append(toggle, editor);
   return wrap;
 }
 
 function detailValue(item, label, value, target) {
-  const block = makeElement("div", `detail-value${item.comments?.[target]?.trim() ? " has-note" : ""}`);
+  const block = makeElement("div", `detail-value${commentsFor(item, target).length ? " has-note" : ""}`);
   block.append(makeElement("span", "detail-label", label));
   block.append(makeElement("strong", "detail-value-text", String(value ?? "").trim() || "—"));
   block.append(noteControl(item, target));
@@ -588,7 +710,7 @@ function detailValue(item, label, value, target) {
 }
 
 function detailRow(item, title, meta, lines, target) {
-  const row = makeElement("div", `detail-row${item.comments?.[target]?.trim() ? " has-note" : ""}`);
+  const row = makeElement("div", `detail-row${commentsFor(item, target).length ? " has-note" : ""}`);
   const heading = makeElement("div", "detail-row-heading");
   heading.append(makeElement("strong", "", title || "—"));
   if (meta) heading.append(makeElement("span", "", meta));
@@ -604,7 +726,7 @@ function detailRow(item, title, meta, lines, target) {
 }
 
 function detailSection(item, number, title, target) {
-  const section = makeElement("section", `submitted-section${item.comments?.[target]?.trim() ? " has-note" : ""}`);
+  const section = makeElement("section", `submitted-section${commentsFor(item, target).length ? " has-note" : ""}`);
   const heading = makeElement("div", "submitted-section-heading");
   heading.append(makeElement("span", "section-number", number), makeElement("h3", "", title));
   heading.append(noteControl(item, target, "Комментарий к разделу"));
@@ -698,28 +820,100 @@ function renderSubmittedReport(item) {
   root.append(sheet);
 }
 
-function updateComment(target) {
-  const item = state.reports.find((candidate) => candidate.id === activeReportId);
-  if (!item) return;
-  item.comments ||= {};
-  item.comments[target.dataset.noteInput] = target.value;
-  const wrap = target.closest(".review-note");
-  const hasValue = target.value.trim() !== "";
-  wrap.classList.toggle("has-note", hasValue);
-  wrap.closest(".detail-row, .detail-value, .submitted-section")?.classList.toggle("has-note", hasValue);
-  const toggle = $("[data-note-toggle]", wrap);
-  if (toggle) {
-    const label = toggle.dataset.noteLabel || "Комментарий";
-    toggle.textContent = hasValue ? label : `+ ${label.toLowerCase()}`;
+function activeSubmittedReport() {
+  return state.reports.find((candidate) => candidate.id === activeReportId);
+}
+
+function refreshCommentThread(item, target) {
+  const current = $$(".review-note[data-note-target]", $("#report-detail"))
+    .find((node) => node.dataset.noteTarget === target);
+  if (!current) return;
+  const replacement = noteControl(item, target, current.dataset.noteLabel || "Комментарий");
+  current.replaceWith(replacement);
+  replacement.closest(".detail-row, .detail-value, .submitted-section")?.classList.add("has-note");
+  const editor = $(".note-editor", replacement);
+  editor.hidden = false;
+  replacement.classList.add("is-open");
+  $("[data-note-toggle]", replacement)?.setAttribute("aria-expanded", "true");
+  $("[data-comment-text]", replacement)?.focus();
+}
+
+function addComment(button) {
+  const item = activeSubmittedReport();
+  const composer = button.closest("[data-comment-composer]");
+  if (!item || !composer) return;
+  const target = button.dataset.addComment;
+  const author = $("[data-comment-author]", composer);
+  const textarea = $("[data-comment-text]", composer);
+  const error = $("[data-comment-error]", composer);
+  const authorValue = author.value.trim();
+  const textValue = textarea.value.trim();
+
+  author.classList.toggle("is-invalid", !authorValue);
+  textarea.classList.toggle("is-invalid", !textValue);
+  if (!authorValue || !textValue) {
+    error.textContent = !authorValue && !textValue
+      ? "Укажи имя и напиши комментарий"
+      : !authorValue
+        ? "Укажи, кто пишет"
+        : "Напиши комментарий";
+    (!authorValue ? author : textarea).focus();
+    return;
   }
-  persistState();
-  renderNav();
+
+  item.comments ||= {};
+  item.comments[target] ||= [];
+  const message = {
+    id: id(),
+    author: authorValue,
+    text: textValue,
+    createdAt: new Date().toISOString(),
+    replyTo: composer.dataset.replyTo || "",
+  };
+  item.comments[target].push(message);
+  const previousAuthor = state.commentAuthor;
+  state.commentAuthor = authorValue;
+  if (!persistState({ immediate: true })) {
+    item.comments[target] = item.comments[target].filter((candidate) => candidate.id !== message.id);
+    if (!item.comments[target].length) delete item.comments[target];
+    state.commentAuthor = previousAuthor;
+    error.textContent = "Не удалось сохранить. Попробуй убрать часть старых данных.";
+    return;
+  }
+  refreshCommentThread(item, target);
+}
+
+function startReply(button) {
+  const item = activeSubmittedReport();
+  const wrap = button.closest(".review-note");
+  const target = button.dataset.noteTarget;
+  const message = commentsFor(item || {}, target).find((candidate) => candidate.id === button.dataset.replyMessage);
+  if (!item || !wrap || !message) return;
+  const editor = $(".note-editor", wrap);
+  const composer = $("[data-comment-composer]", wrap);
+  const replyingTo = $("[data-replying-to]", composer);
+  editor.hidden = false;
+  $("[data-note-toggle]", wrap)?.setAttribute("aria-expanded", "true");
+  composer.dataset.replyTo = message.id;
+  $("[data-replying-text]", replyingTo).textContent = `Ответ на ${message.author}: ${short(message.text, "сообщение")}`;
+  replyingTo.hidden = false;
+  $("[data-comment-text]", composer)?.focus();
+}
+
+function cancelReply(button) {
+  const composer = button.closest("[data-comment-composer]");
+  if (!composer) return;
+  composer.dataset.replyTo = "";
+  $("[data-replying-to]", composer).hidden = true;
+  $("[data-comment-text]", composer)?.focus();
 }
 
 app.addEventListener("input", (event) => {
   const target = event.target;
-  if (target.matches("[data-note-input]")) {
-    updateComment(target);
+  if (target.matches("[data-comment-author], [data-comment-text]")) {
+    target.classList.remove("is-invalid");
+    const error = $("[data-comment-error]", target.closest("[data-comment-composer]"));
+    if (error) error.textContent = "";
     return;
   }
   if (!report) return;
@@ -794,8 +988,27 @@ app.addEventListener("click", (event) => {
     const wrap = noteToggle.closest(".review-note");
     const editor = $(".note-editor", wrap);
     editor.hidden = !editor.hidden;
+    wrap.classList.toggle("is-open", !editor.hidden);
     noteToggle.setAttribute("aria-expanded", String(!editor.hidden));
-    if (!editor.hidden) $("textarea", editor)?.focus();
+    if (!editor.hidden) {
+      const author = $("[data-comment-author]", editor);
+      (author?.value.trim() ? $("[data-comment-text]", editor) : author)?.focus();
+    }
+    return;
+  }
+  const replyButton = event.target.closest("[data-reply-message]");
+  if (replyButton) {
+    startReply(replyButton);
+    return;
+  }
+  const cancelReplyButton = event.target.closest("[data-cancel-reply]");
+  if (cancelReplyButton) {
+    cancelReply(cancelReplyButton);
+    return;
+  }
+  const addCommentButton = event.target.closest("[data-add-comment]");
+  if (addCommentButton) {
+    addComment(addCommentButton);
     return;
   }
   if (event.target.closest("#submit-report")) {
