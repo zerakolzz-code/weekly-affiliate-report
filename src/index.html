@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <title>Weekly Affiliate Report</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="auth-screen" class="auth-screen">
+      <main class="auth-card">
+        <div class="brand-mark">WR</div>
+        <p class="eyebrow">Weekly Affiliate Report</p>
+        <h1>Открой свой отчёт</h1>
+        <p class="auth-copy">У каждого сотрудника свой пароль и свои данные. Логин не нужен.</p>
+        <form id="auth-form" class="auth-form">
+          <label for="password">Пароль</label>
+          <div class="password-row">
+            <input id="password" name="password" type="password" autocomplete="current-password" minlength="4" placeholder="Введите пароль" required />
+            <button class="button button-primary" type="submit">Войти</button>
+          </div>
+          <p id="auth-error" class="field-error" aria-live="polite"></p>
+        </form>
+        <p class="demo-note">Демо-версия. Данные хранятся только в этом браузере. Для реальной работы нужен сервер и нормальная авторизация.</p>
+      </main>
+    </div>
+
+    <div id="app" class="app" hidden>
+      <header class="topbar">
+        <div class="topbar-brand">
+          <span class="brand-mark brand-mark-small">WR</span>
+          <div>
+            <p class="eyebrow">Weekly Affiliate Report</p>
+            <h1>Еженедельный отчёт</h1>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <span id="save-state" class="save-state">Все сохранено</span>
+          <button id="logout" class="button button-quiet" type="button">Выйти</button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="report-column">
+          <div class="report-heading">
+            <div>
+              <label class="field-label" for="week-start">Неделя</label>
+              <input id="week-start" class="week-picker" type="date" />
+              <p class="period-note">Заполняется по понедельникам. Итоги за прошлую неделю с понедельника по воскресенье, план на новую неделю.</p>
+            </div>
+            <div class="report-meta">
+              <label class="field-label" for="manager-name">Менеджер</label>
+              <input id="manager-name" type="text" placeholder="Имя" required />
+            </div>
+          </div>
+
+          <article class="report-card is-collapsed" data-section-card>
+            <div class="card-heading">
+              <button class="section-toggle" type="button" data-toggle-section aria-expanded="false"><span class="section-number">01</span><h2>Результат недели</h2><span class="section-chevron">⌄</span></button>
+              <button class="help-button" type="button" data-help="help-results" aria-label="Что заполнять в результате недели" aria-expanded="false">?</button>
+              <div id="help-results" class="help-popover" hidden>
+                <strong>Что вводить</strong>
+                <p>Общий FTD за прошлую неделю и количество активных партнёров. Активным считается партнёр с 5 или более FTD за период.</p>
+                <strong>Пример</strong>
+                <p>FTD: 124. Активные партнёры: 18.</p>
+              </div>
+            </div>
+            <div class="section-body">
+              <div class="result-split">
+                <label>FTD<input id="ftd" type="number" min="0" inputmode="numeric" placeholder="0" required /></label>
+                <label>Активные партнёры<input id="active-affiliates" type="number" min="0" inputmode="numeric" placeholder="0" required /></label>
+              </div>
+            </div>
+          </article>
+
+          <article class="report-card is-collapsed" data-section-card>
+            <div class="card-heading">
+              <button class="section-toggle" type="button" data-toggle-section aria-expanded="false"><span class="section-number">02</span><h2>Привлечение</h2><span class="section-chevron">⌄</span></button>
+              <button class="help-button" type="button" data-help="help-acquisition" aria-label="Что заполнять в привлечении" aria-expanded="false">?</button>
+              <div id="help-acquisition" class="help-popover" hidden>
+                <strong>Что вводить</strong>
+                <p>Добавь партнёра, выбери тип и заполни почту или имя. Счётчики обновятся сами. Новый партнёр: зарегистрирован за неделю или уже обсуждает сделку. Новая сделка: условия отправлены за неделю. Реактивирован: вернулся в работу.</p>
+                <strong>Пример</strong>
+                <p>Новые партнёры: 7. Реактивированы: 1. Новые сделки: 4. partner@mail.com, GEO: BR, источник: Facebook, CPA отправлен, ждём подтверждение.</p>
+              </div>
+            </div>
+            <div class="section-body">
+              <div class="acquisition-counters">
+                <div class="metric-counter"><span>Новые партнёры</span><strong id="new-affiliates-count">0</strong></div>
+                <div class="metric-counter"><span>Новые сделки</span><strong id="new-deals-count">0</strong></div>
+                <div class="metric-counter"><span>Реактивированы</span><strong id="reactivated-count">0</strong></div>
+              </div>
+              <div class="search-control">
+                <label class="empty-option"><input id="no-search" type="checkbox" /> Поиском не занимался</label>
+                <label id="no-search-reason-wrap" class="required-reason" hidden>Чем был занят вместо поиска <span>обязательно</span>
+                  <textarea id="no-search-reason" rows="2" placeholder="Коротко напиши, куда ушло время"></textarea>
+                  <small>Если ставишь галочку, это поле нельзя оставлять пустым.</small>
+                </label>
+              </div>
+              <div id="acquisition-list" class="dynamic-list list-with-offset"></div>
+              <button class="button button-add" data-add="acquisition" type="button">+ Добавить партнёра</button>
+            </div>
+          </article>
+
+          <article class="report-card is-collapsed" data-section-card>
+            <div class="card-heading">
+              <button class="section-toggle" type="button" data-toggle-section aria-expanded="false"><span class="section-number">03</span><h2>Текущие партнёры</h2><span class="section-chevron">⌄</span></button>
+              <button class="help-button" type="button" data-help="help-existing" aria-label="Что заполнять по текущим партнёрам" aria-expanded="false">?</button>
+              <div id="help-existing" class="help-popover" hidden>
+                <strong>Что вводить</strong>
+                <p>Партнёров, у которых заметно вырос или упал трафик. Укажи почту, направление изменения и причину. При падении сюда же пиши, что делаем для восстановления.</p>
+                <strong>Пример</strong>
+                <p>partner@mail.com, падение, 84 → 37 FTD: заблокировался источник, согласовали новый подход на тест.</p>
+              </div>
+            </div>
+            <div class="section-body">
+              <div class="movement-summary">
+                <span><strong id="grown-count">0</strong> выросли</span>
+                <span><strong id="fallen-count">0</strong> упали</span>
+              </div>
+              <div id="existing-list" class="dynamic-list"></div>
+              <button class="button button-add" data-add="existing" type="button">+ Добавить изменение</button>
+            </div>
+          </article>
+
+          <article class="report-card is-collapsed" data-section-card>
+            <div class="card-heading">
+              <button class="section-toggle" type="button" data-toggle-section aria-expanded="false"><span class="section-number">04</span><h2>Проблемы</h2><span class="section-chevron">⌄</span></button>
+              <button class="help-button" type="button" data-help="help-problems" aria-label="Что заполнять в проблемах" aria-expanded="false">?</button>
+              <div id="help-problems" class="help-popover" hidden>
+                <strong>Что вводить</strong>
+                <p>Почту партнёра, саму проблему и что ты уже сделал или собираешься сделать. Сюда относятся игнор, задержка оплаты, трекинг, условия работы и другие затыки.</p>
+                <strong>Пример</strong>
+                <p>partner@mail.com: задержка оплаты. Уточнил данные через Марину, партнёру дал апдейт, жду подтверждение.</p>
+              </div>
+            </div>
+            <div class="section-body">
+              <label class="empty-option"><input id="no-problems" type="checkbox" /> Проблем нет</label>
+              <div data-optional-content="noProblems">
+                <div id="problems-list" class="dynamic-list list-with-offset"></div>
+                <button class="button button-add" data-add="problems" type="button">+ Добавить проблему</button>
+              </div>
+            </div>
+          </article>
+
+          <article class="report-card is-collapsed" data-section-card>
+            <div class="card-heading">
+              <button class="section-toggle" type="button" data-toggle-section aria-expanded="false"><span class="section-number">05</span><h2>Следующая неделя</h2><span class="section-chevron">⌄</span></button>
+              <button class="help-button" type="button" data-help="help-next-week" aria-label="Что заполнять в плане на следующую неделю" aria-expanded="false">?</button>
+              <div id="help-next-week" class="help-popover" hidden>
+                <strong>Что вводить</strong>
+                <p>Построчный план на новую неделю. Можно добавлять задачи по конкретным партнёрам и обычные рабочие задачи. В конце недели рядом оставляется короткий апдейт по итогу.</p>
+                <strong>Пример</strong>
+                <p>План: реактивировать 5 партнёров по BR. Апдейт: 3 вернулись, 2 пока не ответили.</p>
+              </div>
+            </div>
+            <div class="section-body">
+              <label class="single-metric">План по поиску
+                <input id="search-plan" type="number" min="0" inputmode="numeric" placeholder="0" />
+              </label>
+              <div id="next-week-list" class="dynamic-list list-with-offset"></div>
+              <button class="button button-add" data-add="nextWeek" type="button">+ Добавить пункт</button>
+            </div>
+          </article>
+
+          <article class="report-card summary-card is-collapsed" data-section-card>
+            <div class="card-heading">
+              <button class="section-toggle" type="button" data-toggle-section aria-expanded="false"><span class="section-number">06</span><h2>Главное за неделю</h2><span class="section-chevron">⌄</span></button>
+              <button class="help-button" type="button" data-help="help-summary" aria-label="Что заполнять в главном за неделю" aria-expanded="false">?</button>
+              <div id="help-summary" class="help-popover" hidden>
+                <strong>Что вводить</strong>
+                <p>Самые важные приоритеты на текущую неделю, проблемы и достижения прошлой недели. Начни с трёх главных, при необходимости добавь ещё.</p>
+                <strong>Пример</strong>
+                <p>Приоритет: запустить два новых теста по MX. Проблема: задержка трекинга. Достижение: вернули партнёра на 60 FTD.</p>
+              </div>
+            </div>
+            <div class="section-body">
+              <div class="summary-grid">
+                <section>
+                  <h3>Топ приоритетов на неделю <span class="required-tag">обязательно</span></h3>
+                  <div id="priorities-list" class="compact-list"></div>
+                  <button class="text-button" data-add="priorities" type="button">+ Добавить</button>
+                </section>
+                <section>
+                  <h3>Топ проблем</h3>
+                  <label class="empty-option empty-option-small"><input id="no-top-problems" type="checkbox" /> Проблем нет</label>
+                  <div data-optional-content="noTopProblems">
+                    <div id="top-problems-list" class="compact-list"></div>
+                    <button class="text-button" data-add="topProblems" type="button">+ Добавить</button>
+                  </div>
+                </section>
+                <section>
+                  <h3>Топ достижений</h3>
+                  <label class="empty-option empty-option-small"><input id="no-achievements" type="checkbox" /> Достижений нет</label>
+                  <div data-optional-content="noAchievements">
+                    <div id="achievements-list" class="compact-list"></div>
+                    <button class="text-button" data-add="achievements" type="button">+ Добавить</button>
+                  </div>
+                </section>
+              </div>
+            </div>
+          </article>
+        </section>
+      </main>
+    </div>
+
+    <template id="acquisition-template">
+      <div class="list-row" data-row>
+        <div class="row-summary">
+          <button class="row-toggle" data-toggle-row type="button" aria-expanded="false">
+            <span class="row-summary-main" data-summary-main></span>
+            <span class="row-summary-secondary" data-summary-secondary></span>
+            <span class="row-chevron">⌄</span>
+          </button>
+          <button class="icon-button" data-remove type="button" aria-label="Удалить строку">×</button>
+        </div>
+        <div class="row-editor">
+          <div class="row-fields row-fields-acquisition">
+            <label>Тип<select data-field="kind" required><option value="">Выбрать</option><option value="newAffiliate">Новый партнёр</option><option value="newDeal">Новая сделка</option><option value="reactivated">Реактивирован</option></select></label>
+            <label>Почта / партнёр<input data-field="partner" type="text" placeholder="partner@mail.com" required /></label>
+            <label>GEO<input data-field="geo" type="text" maxlength="2" placeholder="BR" required /></label>
+            <label>Источник<input data-field="source" type="text" placeholder="Facebook" required /></label>
+          </div>
+          <label class="editor-block">Статус<textarea data-field="result" rows="2" placeholder="Что обсуждаем или согласовали" required></textarea></label>
+          <button class="collapse-button" data-collapse-row type="button">Свернуть</button>
+        </div>
+      </div>
+    </template>
+
+    <template id="existing-template">
+      <div class="list-row" data-row>
+        <div class="row-summary">
+          <button class="row-toggle" data-toggle-row type="button" aria-expanded="false">
+            <span class="row-summary-main" data-summary-main></span>
+            <span class="row-summary-secondary" data-summary-secondary></span>
+            <span class="row-chevron">⌄</span>
+          </button>
+          <button class="icon-button" data-remove type="button" aria-label="Удалить строку">×</button>
+        </div>
+        <div class="row-editor">
+          <div class="row-fields row-fields-existing">
+            <label>Почта партнёра<input data-field="email" type="text" placeholder="partner@mail.com" required /></label>
+            <label>GEO<input data-field="geo" type="text" maxlength="2" placeholder="BR" required /></label>
+            <label>Изменение<select data-field="movement" required><option value="">Выбрать</option><option value="grew">Рост</option><option value="fell">Падение</option></select></label>
+          </div>
+          <div class="editor-blocks">
+            <label class="editor-block">Причина<textarea data-field="reason" rows="2" placeholder="Почему вырос или упал" required></textarea></label>
+            <label class="editor-block">Что делаем<textarea data-field="action" rows="2" placeholder="Что уже сделали или будем делать" required></textarea></label>
+          </div>
+          <button class="collapse-button" data-collapse-row type="button">Свернуть</button>
+        </div>
+      </div>
+    </template>
+
+    <template id="problems-template">
+      <div class="list-row" data-row>
+        <div class="row-summary">
+          <button class="row-toggle" data-toggle-row type="button" aria-expanded="false">
+            <span class="row-summary-main" data-summary-main></span>
+            <span class="row-summary-secondary" data-summary-secondary></span>
+            <span class="row-chevron">⌄</span>
+          </button>
+          <button class="icon-button" data-remove type="button" aria-label="Удалить строку">×</button>
+        </div>
+        <div class="row-editor">
+          <div class="row-fields row-fields-problems">
+            <label>Почта партнёра<input data-field="email" type="text" placeholder="partner@mail.com" required /></label>
+          </div>
+          <div class="editor-blocks">
+            <label class="editor-block">Проблема<textarea data-field="problem" rows="2" placeholder="В чём затык" required></textarea></label>
+            <label class="editor-block">Решение / статус<textarea data-field="resolution" rows="2" placeholder="Как решил, решаешь или будешь решать" required></textarea></label>
+          </div>
+          <button class="collapse-button" data-collapse-row type="button">Свернуть</button>
+        </div>
+      </div>
+    </template>
+
+    <template id="next-week-template">
+      <div class="list-row" data-row>
+        <div class="row-summary">
+          <button class="row-toggle" data-toggle-row type="button" aria-expanded="false">
+            <span class="row-summary-main" data-summary-main></span>
+            <span class="row-summary-secondary" data-summary-secondary></span>
+            <span class="row-chevron">⌄</span>
+          </button>
+          <button class="icon-button" data-remove type="button" aria-label="Удалить строку">×</button>
+        </div>
+        <div class="row-editor">
+          <div class="editor-blocks">
+            <label class="editor-block">План<textarea data-field="plan" rows="2" placeholder="Что нужно сделать" required></textarea></label>
+            <label class="editor-block">Апдейт по итогу<textarea data-field="update" rows="2" placeholder="Заполняется по окончании недели"></textarea></label>
+          </div>
+          <button class="collapse-button" data-collapse-row type="button">Свернуть</button>
+        </div>
+      </div>
+    </template>
+
+    <template id="compact-template">
+      <div class="list-row compact-row" data-row>
+        <div class="row-summary">
+          <button class="row-toggle" data-toggle-row type="button" aria-expanded="false">
+            <span class="row-summary-main" data-summary-main></span>
+            <span class="row-summary-secondary" data-summary-secondary></span>
+            <span class="row-chevron">⌄</span>
+          </button>
+          <button class="icon-button" data-remove type="button" aria-label="Удалить строку">×</button>
+        </div>
+        <div class="row-editor">
+          <label class="editor-block"><span class="visually-hidden">Текст</span><textarea data-field="text" rows="2" placeholder="Коротко и по факту" required></textarea></label>
+          <button class="collapse-button" data-collapse-row type="button">Свернуть</button>
+        </div>
+      </div>
+    </template>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>
