@@ -333,7 +333,7 @@ function previousReportFor(manager, weekStart) {
 function previousPlanRows(source) {
   if (!source) return [];
   const rows = [];
-  if (String(source.metrics?.searchPlan ?? "").trim()) {
+  if (numeric(source.metrics?.searchPlan) > 0) {
     rows.push({ sourceKey: "search-plan", text: `Поиск: ${source.metrics.searchPlan} новых партнёров` });
   }
   (source.nextWeek || []).forEach((row) => {
@@ -350,19 +350,17 @@ function syncPlanReview() {
   const sourceWeekStart = source?.weekStart || shiftWeek(report.weekStart, -7);
   if (report.planReview.sourceReportId === sourceId && report.planReview.sourceWeekStart === sourceWeekStart) return false;
 
-  const currentByKey = new Map((report.planReview.rows || []).map((row) => [row.sourceKey, row]));
   report.planReview = {
     sourceReportId: sourceId,
     sourceWeekStart,
     rows: previousPlanRows(source).map((sourceRow) => {
-      const current = currentByKey.get(sourceRow.sourceKey);
       return {
-        id: current?.id || id(),
+        id: id(),
         sourceKey: sourceRow.sourceKey,
         text: sourceRow.text,
-        status: current?.status || "",
-        comment: current?.comment || "",
-        collapsed: current?.collapsed !== false,
+        status: "",
+        comment: "",
+        collapsed: true,
       };
     }),
   };
@@ -698,10 +696,18 @@ function validateReport() {
   const errors = [];
   const hasValue = (value) => String(value ?? "").trim() !== "";
   const isGeo = (value) => /^[A-Za-z]{2}$/.test(value);
+  const isNonNegativeInteger = (value) => hasValue(value) && Number.isInteger(Number(value)) && Number(value) >= 0;
+  const selectedDate = new Date(`${report.weekStart}T12:00:00`);
   if (!hasValue(report.weekStart)) addValidationError(errors, "Неделя", "#week-start", -1);
+  else if (Number.isNaN(selectedDate.getTime()) || selectedDate.getDay() !== 1) {
+    addValidationError(errors, "Дата недели должна быть понедельником", "#week-start", -1);
+  }
   if (!hasValue(report.manager)) addValidationError(errors, "Менеджер", "#manager-name", -1);
-  if (!hasValue(report.metrics.ftd)) addValidationError(errors, "FTD", "#ftd", -1);
-  if (!hasValue(report.metrics.activeAffiliates)) addValidationError(errors, "Активные партнёры", "#active-affiliates", -1);
+  else if (state.reports.some((item) => normalizeManagerName(item.manager) === normalizeManagerName(report.manager) && item.weekStart === report.weekStart)) {
+    addValidationError(errors, "Отчёт этого менеджера за выбранную неделю уже отправлен", "#manager-name", -1);
+  }
+  if (!isNonNegativeInteger(report.metrics.ftd)) addValidationError(errors, "FTD: целое число от 0", "#ftd", -1);
+  if (!isNonNegativeInteger(report.metrics.activeAffiliates)) addValidationError(errors, "Активные партнёры: целое число от 0", "#active-affiliates", -1);
 
   (report.planReview?.rows || []).forEach((row, index) => {
     if (!hasValue(row.status)) {
@@ -750,7 +756,7 @@ function validateReport() {
     ], 3);
   }
 
-  if (!hasValue(report.metrics.searchPlan)) addValidationError(errors, "План по поиску", "#search-plan", 4);
+  if (!isNonNegativeInteger(report.metrics.searchPlan)) addValidationError(errors, "План по поиску: целое число от 0", "#search-plan", 4);
   if (!report.nextWeek.length) addValidationError(errors, "Добавь хотя бы один пункт на следующую неделю", '[data-add="nextWeek"]', 4);
   validateRows(errors, "nextWeek", report.nextWeek, [{ key: "plan", label: "План на следующую неделю" }], 4);
 
@@ -820,11 +826,22 @@ function submitReport() {
   if (snapshot.noProblems) snapshot.problems = [];
   if (snapshot.noTopProblems) snapshot.topProblems = [];
   snapshot.noAchievements = false;
-  state.reports.unshift(snapshot);
-  state.draft = null;
+  const nextState = { ...state, reports: [snapshot, ...state.reports], draft: null };
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
+  } catch {
+    showValidation([{
+      message: "Не удалось сохранить отчёт. Черновик остался на месте, попробуй ещё раз в чистом браузере.",
+      selector: "#submit-report",
+      sectionIndex: -1,
+    }]);
+    saveState.textContent = "Не удалось сохранить";
+    submitLocked = false;
+    return;
+  }
+  state = nextState;
   report = null;
   activeReportId = snapshot.id;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   saveState.textContent = "Все сохранено";
   renderNav();
   renderReports();
@@ -891,7 +908,7 @@ function renderTeamResults() {
     const track = makeElement("div", "ftd-bar-track");
     const bar = makeElement("div", "ftd-bar");
     bar.style.height = `${Math.max((item.ftd / maximum) * 100, item.ftd ? 5 : 2)}%`;
-    bar.title = `${item.ftd} FTD · отчётов ${item.reports} из ${managerCount}`;
+    bar.title = `${item.ftd} FTD · отчётов ${item.reports} · менеджеров в истории ${managerCount}`;
     track.append(bar);
     const date = new Date(`${item.week}T12:00:00`);
     const label = makeElement("span", "ftd-week-label", formatDate(date, { day: "2-digit", month: "2-digit" }));
@@ -900,7 +917,7 @@ function renderTeamResults() {
     bars.append(column);
   });
   chart.append(bars);
-  chart.append(makeElement("p", "coverage-note", "Под датой: сколько менеджеров сдали отчёт из всех, кто есть в истории."));
+  chart.append(makeElement("p", "coverage-note", "Под датой: отчёты за неделю / менеджеры, которые есть в истории демо."));
 
   const reportsByManager = new Map(
     reports
