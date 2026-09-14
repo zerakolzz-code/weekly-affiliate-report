@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light" />
     <title>Weekly Affiliate Report</title>
-    <link rel="stylesheet" href="styles.css?v=6" />
+    <link rel="stylesheet" href="styles.css?v=7" />
   </head>
   <body>
     <div id="app" class="app">
@@ -36,6 +36,33 @@
             </div>
             <button class="button button-primary" type="button" data-view="editor">+ Создать новый отчёт</button>
           </div>
+          <section id="team-results" class="team-results" aria-labelledby="team-results-title">
+            <div class="team-results-heading">
+              <div>
+                <p class="eyebrow">Команда</p>
+                <h3 id="team-results-title">Результаты</h3>
+              </div>
+              <label class="results-week-label">Неделя
+                <select id="results-week" aria-label="Неделя для сравнения менеджеров"></select>
+              </label>
+            </div>
+            <div class="team-results-grid">
+              <section class="ftd-chart-card" aria-labelledby="ftd-chart-title">
+                <div class="results-card-heading">
+                  <h4 id="ftd-chart-title">FTD по неделям</h4>
+                  <span>вся команда</span>
+                </div>
+                <div id="ftd-chart" class="ftd-chart"></div>
+              </section>
+              <section class="leaderboard-card" aria-labelledby="leaderboard-title">
+                <div class="results-card-heading">
+                  <h4 id="leaderboard-title">Менеджеры</h4>
+                  <span id="leaderboard-period"></span>
+                </div>
+                <div id="leaderboard" class="leaderboard"></div>
+              </section>
+            </div>
+          </section>
           <div id="reports-list" class="reports-list"></div>
           <div id="reports-empty" class="empty-state">
             <strong>Отчётов пока нет</strong>
@@ -63,30 +90,38 @@
             <div>
               <label class="field-label" for="week-start">Неделя</label>
               <input id="week-start" class="week-picker" type="date" />
-              <p class="period-note">Заполняется по понедельникам. Итоги за прошлую неделю с понедельника по воскресенье, план на новую неделю.</p>
+              <p class="period-note">Выбери понедельник отчётной недели. План подтянется из отчёта этого менеджера ровно неделей раньше.</p>
             </div>
             <div class="report-meta">
               <label class="field-label" for="manager-name">Менеджер</label>
-              <input id="manager-name" type="text" placeholder="Имя" required />
+              <input id="manager-name" type="text" list="manager-options" placeholder="Имя" required />
+              <datalist id="manager-options"></datalist>
             </div>
           </div>
 
+          <section class="weekly-totals" aria-label="Цифры недели">
+            <label class="weekly-total weekly-total-input"><span>FTD</span><input id="ftd" type="number" min="0" inputmode="numeric" placeholder="0" required /></label>
+            <label class="weekly-total weekly-total-input"><span>Активные</span><input id="active-affiliates" type="number" min="0" inputmode="numeric" placeholder="0" required /></label>
+            <div class="weekly-total"><span>Новые партнёры</span><strong id="new-affiliates-count">0</strong></div>
+            <div class="weekly-total"><span>Новые сделки</span><strong id="new-deals-count">0</strong></div>
+            <div class="weekly-total"><span>Реактивации</span><strong id="reactivated-count">0</strong></div>
+          </section>
+
           <article class="report-card is-collapsed" data-section-card>
             <div class="card-heading">
-              <button class="section-toggle" type="button" data-toggle-section aria-expanded="false"><span class="section-number">01</span><h2>Результат недели</h2><span class="section-chevron">⌄</span></button>
-              <button class="help-button" type="button" data-help="help-results" aria-label="Что заполнять в результате недели" aria-expanded="false">?</button>
-              <div id="help-results" class="help-popover" hidden>
+              <button class="section-toggle" type="button" data-toggle-section aria-expanded="false"><span class="section-number">01</span><h2>План с прошлой недели</h2><span class="section-chevron">⌄</span></button>
+              <button class="help-button" type="button" data-help="help-previous-plan" aria-label="Как отчитаться по прошлому плану" aria-expanded="false">?</button>
+              <div id="help-previous-plan" class="help-popover" hidden>
                 <strong>Что вводить</strong>
-                <p>Общий FTD за прошлую неделю и количество активных партнёров. Активным считается партнёр с 5 или более FTD за период.</p>
+                <p>План подтягивается из предыдущего отчёта этого менеджера. По каждому пункту выбери результат и коротко напиши, что получилось или почему не получилось.</p>
                 <strong>Пример</strong>
-                <p>FTD: 124. Активные партнёры: 18.</p>
+                <p>Выполнено. Вернул 3 из 5 партнёров, двое пока не ответили.</p>
               </div>
             </div>
             <div class="section-body">
-              <div class="result-split">
-                <label>FTD<input id="ftd" type="number" min="0" inputmode="numeric" placeholder="0" required /></label>
-                <label>Активные партнёры<input id="active-affiliates" type="number" min="0" inputmode="numeric" placeholder="0" required /></label>
-              </div>
+              <p id="previous-plan-source" class="previous-plan-source"></p>
+              <div id="previous-plan-list" class="previous-plan-list"></div>
+              <p id="previous-plan-empty" class="previous-plan-empty"></p>
             </div>
           </article>
 
@@ -102,11 +137,6 @@
               </div>
             </div>
             <div class="section-body">
-              <div class="acquisition-counters">
-                <div class="metric-counter"><span>Новые партнёры</span><strong id="new-affiliates-count">0</strong></div>
-                <div class="metric-counter"><span>Новые сделки</span><strong id="new-deals-count">0</strong></div>
-                <div class="metric-counter"><span>Реактивированы</span><strong id="reactivated-count">0</strong></div>
-              </div>
               <div class="search-control">
                 <label class="empty-option"><input id="no-search" type="checkbox" /> Поиском не занимался</label>
                 <label id="no-search-reason-wrap" class="required-reason" hidden>Чем был занят вместо поиска <span>обязательно</span>
@@ -169,9 +199,9 @@
               <button class="help-button" type="button" data-help="help-next-week" aria-label="Что заполнять в плане на следующую неделю" aria-expanded="false">?</button>
               <div id="help-next-week" class="help-popover" hidden>
                 <strong>Что вводить</strong>
-                <p>Построчный план на новую неделю. Можно добавлять задачи по конкретным партнёрам и обычные рабочие задачи. В конце недели рядом оставляется короткий апдейт по итогу.</p>
+                <p>Построчный план на новую неделю. В следующем отчёте эти пункты подтянутся автоматически, и по каждому нужно будет дать результат.</p>
                 <strong>Пример</strong>
-                <p>План: реактивировать 5 партнёров по BR. Апдейт: 3 вернулись, 2 пока не ответили.</p>
+                <p>Реактивировать 5 партнёров по BR.</p>
               </div>
             </div>
             <div class="section-body">
@@ -210,12 +240,9 @@
                   </div>
                 </section>
                 <section>
-                  <h3>Топ достижений</h3>
-                  <label class="empty-option empty-option-small"><input id="no-achievements" type="checkbox" /> Достижений нет</label>
-                  <div data-optional-content="noAchievements">
-                    <div id="achievements-list" class="compact-list"></div>
-                    <button class="text-button" data-add="achievements" type="button">+ Добавить</button>
-                  </div>
+                  <h3>Топ достижений <span class="required-tag">обязательно</span></h3>
+                  <div id="achievements-list" class="compact-list"></div>
+                  <button class="text-button" data-add="achievements" type="button">+ Добавить</button>
                 </section>
               </div>
             </div>
@@ -315,10 +342,7 @@
           <button class="icon-button" data-remove type="button" aria-label="Удалить строку">×</button>
         </div>
         <div class="row-editor">
-          <div class="editor-blocks">
-            <label class="editor-block">План<textarea data-field="plan" rows="2" placeholder="Что нужно сделать" required></textarea></label>
-            <label class="editor-block">Апдейт по итогу<textarea data-field="update" rows="2" placeholder="Заполняется по окончании недели"></textarea></label>
-          </div>
+          <label class="editor-block">План<textarea data-field="plan" rows="2" placeholder="Что нужно сделать" required></textarea></label>
           <button class="collapse-button" data-collapse-row type="button">Свернуть</button>
         </div>
       </div>
@@ -341,6 +365,6 @@
       </div>
     </template>
 
-    <script src="app.js?v=6" defer></script>
+    <script src="app.js?v=7" defer></script>
   </body>
 </html>

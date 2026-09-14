@@ -21,11 +21,17 @@ const kindLabels = {
   reactivated: "Реактивирован",
 };
 
+const planStatusLabels = {
+  done: "Выполнено",
+  notDone: "Не выполнено",
+};
+
 let state = loadState();
 let report = state.draft || null;
 let activeReportId = "";
 let saveTimer = null;
 let submitLocked = false;
+let selectedResultsWeek = "";
 
 function id() {
   return crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -48,10 +54,11 @@ function toDateInput(date) {
 function blankReport(weekStart = mondayFor()) {
   return {
     id: id(),
-    version: 6,
+    version: 7,
     weekStart,
     manager: "",
     metrics: { ftd: "", activeAffiliates: "", searchPlan: "" },
+    planReview: { sourceReportId: "", sourceWeekStart: "", rows: [] },
     acquisition: [],
     existing: [],
     problems: [],
@@ -73,6 +80,25 @@ function blankReport(weekStart = mondayFor()) {
 function normalizeCompactList(value) {
   if (!Array.isArray(value)) return [];
   return value.map((row) => ({ id: row.id || id(), collapsed: row.collapsed !== false, text: row.text ?? "" }));
+}
+
+function normalizePlanReview(value) {
+  const source = value && typeof value === "object" ? value : {};
+  const rows = Array.isArray(source.rows)
+    ? source.rows.map((row) => ({
+        id: row.id || id(),
+        sourceKey: typeof row.sourceKey === "string" ? row.sourceKey : "",
+        text: typeof row.text === "string" ? row.text : "",
+        status: row.status === "done" || row.status === "notDone" ? row.status : "",
+        comment: typeof row.comment === "string" ? row.comment : "",
+        collapsed: row.collapsed !== false,
+      }))
+    : [];
+  return {
+    sourceReportId: typeof source.sourceReportId === "string" ? source.sourceReportId : "",
+    sourceWeekStart: typeof source.sourceWeekStart === "string" ? source.sourceWeekStart : "",
+    rows,
+  };
 }
 
 function normalizeComments(value, fallbackCreatedAt) {
@@ -108,6 +134,7 @@ function normalizeReport(value, fallbackWeek = mondayFor()) {
   return {
     ...base,
     id: value.id || base.id,
+    version: Number.isFinite(Number(value.version)) ? Number(value.version) : base.version,
     weekStart: typeof value.weekStart === "string" ? value.weekStart : fallbackWeek,
     manager: typeof value.manager === "string" ? value.manager : "",
     metrics: {
@@ -115,6 +142,7 @@ function normalizeReport(value, fallbackWeek = mondayFor()) {
       activeAffiliates: sourceMetrics.activeAffiliates ?? "",
       searchPlan: sourceMetrics.searchPlan ?? "",
     },
+    planReview: normalizePlanReview(value.planReview || value.previousPlanReviews),
     acquisition: Array.isArray(value.acquisition)
       ? value.acquisition.map((row) => ({
           id: row.id || id(), collapsed: row.collapsed !== false, kind: row.kind ?? "",
@@ -150,7 +178,7 @@ function normalizeReport(value, fallbackWeek = mondayFor()) {
     noExisting: value.noExisting === true,
     noProblems: value.noProblems === true,
     noTopProblems: value.noTopProblems === true,
-    noAchievements: value.noAchievements === true,
+    noAchievements: value.status === "submitted" && value.noAchievements === true,
     createdAt: value.createdAt || base.createdAt,
     updatedAt: value.updatedAt || base.updatedAt,
     status: value.status === "submitted" ? "submitted" : undefined,
@@ -246,6 +274,101 @@ function weekRange(weekStart) {
   return `${startText}–${endText}`;
 }
 
+function normalizeManagerName(value) {
+  return String(value || "").trim().replace(/\s+/g, " ").toLocaleLowerCase("ru-RU");
+}
+
+function shiftWeek(weekStart, days) {
+  const date = new Date(`${weekStart}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return "";
+  date.setDate(date.getDate() + days);
+  return toDateInput(date);
+}
+
+function numeric(value) {
+  const result = Number(value);
+  return Number.isFinite(result) ? Math.max(0, result) : 0;
+}
+
+function acquisitionTotals(item) {
+  const filled = (item.acquisition || []).filter((row) => String(row.partner || "").trim() && row.kind);
+  return {
+    newAffiliates: filled.filter((row) => row.kind === "newAffiliate").length,
+    newDeals: filled.filter((row) => row.kind === "newDeal").length,
+    reactivated: filled.filter((row) => row.kind === "reactivated").length,
+  };
+}
+
+function reportNumbers(item) {
+  return {
+    ftd: numeric(item.metrics?.ftd),
+    active: numeric(item.metrics?.activeAffiliates),
+    ...acquisitionTotals(item),
+  };
+}
+
+function latestUniqueReports() {
+  const byManagerWeek = new Map();
+  state.reports.forEach((item) => {
+    const managerKey = normalizeManagerName(item.manager);
+    if (!managerKey || !item.weekStart) return;
+    const key = `${managerKey}::${item.weekStart}`;
+    const current = byManagerWeek.get(key);
+    if (!current || String(item.submittedAt || "").localeCompare(String(current.submittedAt || "")) > 0) {
+      byManagerWeek.set(key, item);
+    }
+  });
+  return [...byManagerWeek.values()];
+}
+
+function previousReportFor(manager, weekStart) {
+  const managerKey = normalizeManagerName(manager);
+  const previousWeek = shiftWeek(weekStart, -7);
+  if (!managerKey || !previousWeek) return null;
+  return state.reports
+    .filter((item) => normalizeManagerName(item.manager) === managerKey && item.weekStart === previousWeek)
+    .sort((a, b) => String(b.submittedAt || "").localeCompare(String(a.submittedAt || "")))[0] || null;
+}
+
+function previousPlanRows(source) {
+  if (!source) return [];
+  const rows = [];
+  if (String(source.metrics?.searchPlan ?? "").trim()) {
+    rows.push({ sourceKey: "search-plan", text: `Поиск: ${source.metrics.searchPlan} новых партнёров` });
+  }
+  (source.nextWeek || []).forEach((row) => {
+    const text = String(row.plan || "").trim();
+    if (text) rows.push({ sourceKey: `next-week:${row.id}`, text });
+  });
+  return rows;
+}
+
+function syncPlanReview() {
+  report.planReview ||= { sourceReportId: "", sourceWeekStart: "", rows: [] };
+  const source = previousReportFor(report.manager, report.weekStart);
+  const sourceId = source?.id || "";
+  const sourceWeekStart = source?.weekStart || shiftWeek(report.weekStart, -7);
+  if (report.planReview.sourceReportId === sourceId && report.planReview.sourceWeekStart === sourceWeekStart) return false;
+
+  const currentByKey = new Map((report.planReview.rows || []).map((row) => [row.sourceKey, row]));
+  report.planReview = {
+    sourceReportId: sourceId,
+    sourceWeekStart,
+    rows: previousPlanRows(source).map((sourceRow) => {
+      const current = currentByKey.get(sourceRow.sourceKey);
+      return {
+        id: current?.id || id(),
+        sourceKey: sourceRow.sourceKey,
+        text: sourceRow.text,
+        status: current?.status || "",
+        comment: current?.comment || "",
+        collapsed: current?.collapsed !== false,
+      };
+    }),
+  };
+  return true;
+}
+
 function showView(view) {
   $("#reports-view").hidden = view !== "reports";
   $("#editor-view").hidden = view !== "editor";
@@ -271,6 +394,8 @@ function renderNav() {
 }
 
 function renderReport() {
+  renderManagerOptions();
+  const planChanged = syncPlanReview();
   $("#week-start").value = report.weekStart;
   $("#manager-name").value = report.manager;
   $("#ftd").value = report.metrics.ftd;
@@ -281,11 +406,132 @@ function renderReport() {
   $("#no-existing").checked = report.noExisting;
   $("#no-problems").checked = report.noProblems;
   $("#no-top-problems").checked = report.noTopProblems;
-  $("#no-achievements").checked = report.noAchievements;
   Object.keys(listConfig).forEach(renderList);
+  renderPlanReview();
   renderAcquisitionSummary();
   renderMovementSummary();
   renderOptionalFields();
+  if (planChanged) persistState();
+}
+
+function renderManagerOptions() {
+  const names = new Map();
+  state.reports.forEach((item) => {
+    const name = String(item.manager || "").trim().replace(/\s+/g, " ");
+    const key = normalizeManagerName(name);
+    if (key && !names.has(key)) names.set(key, name);
+  });
+  const list = $("#manager-options");
+  list.replaceChildren();
+  [...names.values()].sort((a, b) => a.localeCompare(b, "ru")).forEach((name) => {
+    const option = document.createElement("option");
+    option.value = name;
+    list.append(option);
+  });
+}
+
+function renderPlanReview() {
+  const list = $("#previous-plan-list");
+  const empty = $("#previous-plan-empty");
+  const source = $("#previous-plan-source");
+  list.replaceChildren();
+
+  if (!normalizeManagerName(report.manager)) {
+    source.textContent = "";
+    empty.textContent = "Укажи менеджера, чтобы подтянуть план.";
+    return;
+  }
+  if (!report.planReview.sourceReportId) {
+    source.textContent = "";
+    empty.textContent = `За прошлую неделю (${weekRange(report.planReview.sourceWeekStart)}) план не найден.`;
+    return;
+  }
+  source.textContent = `План из отчёта за ${weekRange(report.planReview.sourceWeekStart)}`;
+  if (!report.planReview.rows.length) {
+    empty.textContent = "В прошлом отчёте план не был заполнен.";
+    return;
+  }
+  empty.textContent = "";
+
+  report.planReview.rows.forEach((item) => {
+    const row = makeElement("div", `list-row plan-review-row${item.collapsed ? " is-collapsed" : ""}`);
+    row.dataset.planReviewId = item.id;
+    const summary = makeElement("div", "row-summary");
+    const toggle = makeElement("button", "row-toggle plan-review-toggle");
+    toggle.type = "button";
+    toggle.dataset.togglePlanReview = item.id;
+    toggle.setAttribute("aria-expanded", String(!item.collapsed));
+    toggle.append(
+      makeElement("span", "row-summary-main", short(item.text, "Пункт плана")),
+      makeElement("span", `plan-status${item.status ? ` is-${item.status}` : ""}`, planStatusLabels[item.status] || "Нужен отчёт"),
+      makeElement("span", "row-chevron", "⌄"),
+    );
+    summary.append(toggle);
+
+    const editor = makeElement("div", "row-editor plan-review-editor");
+    const planText = makeElement("p", "plan-review-text", item.text);
+    const fields = makeElement("div", "plan-review-fields");
+    const statusLabel = makeElement("label", "");
+    statusLabel.append(document.createTextNode("Результат"));
+    const select = makeElement("select", "");
+    select.dataset.planReviewField = "status";
+    select.required = true;
+    [["", "Выбрать"], ["done", "Выполнено"], ["notDone", "Не выполнено"]].forEach(([value, label]) => {
+      const option = makeElement("option", "", label);
+      option.value = value;
+      select.append(option);
+    });
+    select.value = item.status;
+    statusLabel.append(select);
+    const commentLabel = makeElement("label", "plan-review-comment");
+    commentLabel.append(document.createTextNode("Комментарий"));
+    const textarea = makeElement("textarea", "");
+    textarea.dataset.planReviewField = "comment";
+    textarea.rows = 2;
+    textarea.required = true;
+    textarea.placeholder = "Что сделано или почему не сделано";
+    textarea.value = item.comment;
+    commentLabel.append(textarea);
+    fields.append(statusLabel, commentLabel);
+    const collapse = makeElement("button", "collapse-button", "Свернуть");
+    collapse.type = "button";
+    collapse.dataset.collapsePlanReview = item.id;
+    editor.append(planText, fields, collapse);
+    row.append(summary, editor);
+    list.append(row);
+  });
+}
+
+function updatePlanReviewField(target) {
+  const row = target.closest("[data-plan-review-id]");
+  const item = report.planReview.rows.find((candidate) => candidate.id === row?.dataset.planReviewId);
+  if (!item) return;
+  item[target.dataset.planReviewField] = target.value;
+  target.classList.remove("is-invalid");
+  const status = $(".plan-status", row);
+  if (status) {
+    status.className = `plan-status${item.status ? ` is-${item.status}` : ""}`;
+    status.textContent = planStatusLabels[item.status] || "Нужен отчёт";
+  }
+  persistState();
+}
+
+function setPlanReviewCollapsed(row, collapsed) {
+  const item = report.planReview.rows.find((candidate) => candidate.id === row?.dataset.planReviewId);
+  if (!item) return;
+  if (!collapsed) {
+    report.planReview.rows.forEach((candidate) => { candidate.collapsed = candidate.id !== item.id; });
+    $$('[data-plan-review-id]', $("#previous-plan-list")).forEach((other) => {
+      const current = other.dataset.planReviewId === item.id;
+      other.classList.toggle("is-collapsed", !current);
+      $("[data-toggle-plan-review]", other)?.setAttribute("aria-expanded", String(current));
+    });
+  }
+  item.collapsed = collapsed;
+  row.classList.toggle("is-collapsed", collapsed);
+  $("[data-toggle-plan-review]", row)?.setAttribute("aria-expanded", String(!collapsed));
+  if (!collapsed) $("[data-plan-review-field]", row)?.focus();
+  persistState();
 }
 
 function renderOptionalFields() {
@@ -340,7 +586,7 @@ function fillRowSummary(type, item, node) {
     secondary.textContent = short([item.problem, item.resolution].filter(Boolean).join(" · "), "Проблема не заполнена");
   } else if (type === "nextWeek") {
     main.textContent = short(item.plan, "Пункт плана не заполнен");
-    secondary.textContent = item.update ? `Апдейт: ${short(item.update)}` : "Апдейта пока нет";
+    secondary.textContent = item.update ? `Старый апдейт: ${short(item.update)}` : "Перейдёт в следующий отчёт";
   } else {
     main.textContent = short(item.text, `${compactLabels[type]} не заполнен`);
     secondary.textContent = "";
@@ -369,7 +615,7 @@ function addRow(type) {
       : type === "problems"
         ? { email: "", problem: "", resolution: "" }
         : type === "nextWeek"
-          ? { plan: "", update: "" }
+          ? { plan: "" }
           : { text: "" };
   report[stateKey].push({ id: id(), collapsed: false, ...fields });
   renderList(type);
@@ -454,8 +700,17 @@ function validateReport() {
   const isGeo = (value) => /^[A-Za-z]{2}$/.test(value);
   if (!hasValue(report.weekStart)) addValidationError(errors, "Неделя", "#week-start", -1);
   if (!hasValue(report.manager)) addValidationError(errors, "Менеджер", "#manager-name", -1);
-  if (!hasValue(report.metrics.ftd)) addValidationError(errors, "FTD", "#ftd", 0);
-  if (!hasValue(report.metrics.activeAffiliates)) addValidationError(errors, "Активные партнёры", "#active-affiliates", 0);
+  if (!hasValue(report.metrics.ftd)) addValidationError(errors, "FTD", "#ftd", -1);
+  if (!hasValue(report.metrics.activeAffiliates)) addValidationError(errors, "Активные партнёры", "#active-affiliates", -1);
+
+  (report.planReview?.rows || []).forEach((row, index) => {
+    if (!hasValue(row.status)) {
+      addValidationError(errors, `Результат по плану, пункт ${index + 1}`, `[data-plan-review-id="${row.id}"] [data-plan-review-field="status"]`, 0);
+    }
+    if (!hasValue(row.comment)) {
+      addValidationError(errors, `Комментарий по плану, пункт ${index + 1}`, `[data-plan-review-id="${row.id}"] [data-plan-review-field="comment"]`, 0);
+    }
+  });
 
   if (!report.acquisition.length && !report.noSearch) {
     addValidationError(errors, "Добавь результат привлечения или отметь «Поиском не занимался»", "#no-search", 1);
@@ -505,10 +760,8 @@ function validateReport() {
     addValidationError(errors, "Добавь топ-проблему или отметь «Проблем нет»", "#no-top-problems", 5);
   }
   if (!report.noTopProblems) validateRows(errors, "topProblems", report.topProblems, [{ key: "text", label: "Топ-проблема" }], 5);
-  if (!report.noAchievements && !report.achievements.length) {
-    addValidationError(errors, "Добавь достижение или отметь «Достижений нет»", "#no-achievements", 5);
-  }
-  if (!report.noAchievements) validateRows(errors, "achievements", report.achievements, [{ key: "text", label: "Достижение" }], 5);
+  if (!report.achievements.length) addValidationError(errors, "Добавь хотя бы одно достижение", '[data-add="achievements"]', 5);
+  validateRows(errors, "achievements", report.achievements, [{ key: "text", label: "Достижение" }], 5);
   return errors;
 }
 
@@ -534,6 +787,8 @@ function showValidation(errors) {
   const target = $(first.selector);
   const row = target?.closest("[data-row]");
   if (row?.classList.contains("is-collapsed")) setRowCollapsed(row, false);
+  const planRow = target?.closest("[data-plan-review-id]");
+  if (planRow?.classList.contains("is-collapsed")) setPlanReviewCollapsed(planRow, false);
   target?.focus();
   summary.scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -545,6 +800,10 @@ function dismissValidation() {
 function submitReport() {
   if (submitLocked) return;
   submitLocked = true;
+  if (syncPlanReview()) {
+    renderPlanReview();
+    persistState();
+  }
   const errors = validateReport();
   showValidation(errors);
   if (errors.length) {
@@ -560,7 +819,7 @@ function submitReport() {
   if (snapshot.noExisting) snapshot.existing = [];
   if (snapshot.noProblems) snapshot.problems = [];
   if (snapshot.noTopProblems) snapshot.topProblems = [];
-  if (snapshot.noAchievements) snapshot.achievements = [];
+  snapshot.noAchievements = false;
   state.reports.unshift(snapshot);
   state.draft = null;
   report = null;
@@ -581,12 +840,122 @@ function makeElement(tag, className = "", text = "") {
   return node;
 }
 
+function renderTeamResults() {
+  const reports = latestUniqueReports();
+  const weeks = [...new Set(reports.map((item) => item.weekStart).filter(Boolean))].sort().reverse();
+  const select = $("#results-week");
+  const chart = $("#ftd-chart");
+  const leaderboard = $("#leaderboard");
+  select.replaceChildren();
+  chart.replaceChildren();
+  leaderboard.replaceChildren();
+
+  if (!weeks.length) {
+    select.disabled = true;
+    $("#leaderboard-period").textContent = "";
+    chart.append(emptyDetail("График появится после первого отправленного отчёта."));
+    leaderboard.append(emptyDetail("Пока не с чем сравнивать."));
+    return;
+  }
+
+  select.disabled = false;
+  if (!weeks.includes(selectedResultsWeek)) selectedResultsWeek = weeks[0];
+  weeks.forEach((week) => {
+    const option = makeElement("option", "", weekRange(week));
+    option.value = week;
+    option.selected = week === selectedResultsWeek;
+    select.append(option);
+  });
+  $("#leaderboard-period").textContent = weekRange(selectedResultsWeek);
+
+  const names = new Map();
+  reports.forEach((item) => {
+    const key = normalizeManagerName(item.manager);
+    if (key && !names.has(key)) names.set(key, String(item.manager || "").trim());
+  });
+  const managerCount = names.size;
+  const chartWeeks = [...weeks].reverse().slice(-8);
+  const chartData = chartWeeks.map((week) => {
+    const weekReports = reports.filter((item) => item.weekStart === week);
+    return {
+      week,
+      ftd: weekReports.reduce((sum, item) => sum + reportNumbers(item).ftd, 0),
+      reports: weekReports.length,
+    };
+  });
+  const maximum = Math.max(...chartData.map((item) => item.ftd), 1);
+  const bars = makeElement("div", "ftd-bars");
+  chartData.forEach((item) => {
+    const column = makeElement("div", "ftd-week");
+    const value = makeElement("strong", "ftd-week-value", String(item.ftd));
+    const track = makeElement("div", "ftd-bar-track");
+    const bar = makeElement("div", "ftd-bar");
+    bar.style.height = `${Math.max((item.ftd / maximum) * 100, item.ftd ? 5 : 2)}%`;
+    bar.title = `${item.ftd} FTD · отчётов ${item.reports} из ${managerCount}`;
+    track.append(bar);
+    const date = new Date(`${item.week}T12:00:00`);
+    const label = makeElement("span", "ftd-week-label", formatDate(date, { day: "2-digit", month: "2-digit" }));
+    const coverage = makeElement("small", "ftd-week-coverage", `${item.reports}/${managerCount}`);
+    column.append(value, track, label, coverage);
+    bars.append(column);
+  });
+  chart.append(bars);
+  chart.append(makeElement("p", "coverage-note", "Под датой: сколько менеджеров сдали отчёт из всех, кто есть в истории."));
+
+  const reportsByManager = new Map(
+    reports
+      .filter((item) => item.weekStart === selectedResultsWeek)
+      .map((item) => [normalizeManagerName(item.manager), item]),
+  );
+  const rows = [...names.entries()].map(([managerKey, manager]) => {
+    const item = reportsByManager.get(managerKey) || null;
+    return { managerKey, manager, item, numbers: item ? reportNumbers(item) : null };
+  }).sort((a, b) => {
+    if (!a.item && b.item) return 1;
+    if (a.item && !b.item) return -1;
+    if (!a.item && !b.item) return a.manager.localeCompare(b.manager, "ru");
+    return b.numbers.ftd - a.numbers.ftd
+      || b.numbers.newDeals - a.numbers.newDeals
+      || a.manager.localeCompare(b.manager, "ru");
+  });
+
+  const scroll = makeElement("div", "leaderboard-scroll");
+  const table = makeElement("table", "leaderboard-table");
+  const head = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  ["Место", "Менеджер", "FTD", "Новые партнёры", "Новые сделки", "Реактивации", "Активные"].forEach((label) => {
+    headRow.append(makeElement("th", "", label));
+  });
+  head.append(headRow);
+  const body = document.createElement("tbody");
+  let place = 0;
+  rows.forEach((row) => {
+    const tableRow = makeElement("tr", `leaderboard-row${row.item ? "" : " is-missing"}`);
+    if (row.item) place += 1;
+    if (place === 1 && row.item) tableRow.classList.add("is-leader");
+    tableRow.append(makeElement("td", "leaderboard-rank", row.item ? String(place) : "—"));
+    const managerCell = makeElement("td", "leaderboard-manager");
+    managerCell.append(makeElement("strong", "", row.manager));
+    if (!row.item) managerCell.append(makeElement("span", "missing-report", "Нет отчёта"));
+    tableRow.append(managerCell);
+    const values = row.numbers
+      ? [row.numbers.ftd, row.numbers.newAffiliates, row.numbers.newDeals, row.numbers.reactivated, row.numbers.active]
+      : ["—", "—", "—", "—", "—"];
+    values.forEach((value) => tableRow.append(makeElement("td", "leaderboard-number", String(value))));
+    body.append(tableRow);
+  });
+  table.append(head, body);
+  scroll.append(table);
+  leaderboard.append(scroll);
+}
+
 function renderReports() {
   const list = $("#reports-list");
   const empty = $("#reports-empty");
   list.replaceChildren();
   empty.hidden = state.reports.length > 0;
   renderNav();
+  renderTeamResults();
   [...state.reports]
     .sort((a, b) => String(b.submittedAt).localeCompare(String(a.submittedAt)))
     .forEach((item) => {
@@ -597,10 +966,7 @@ function renderReports() {
       main.append(makeElement("strong", "", item.manager || "Менеджер не указан"));
       main.append(makeElement("span", "", `Неделя ${weekRange(item.weekStart)}`));
       const metrics = makeElement("span", "report-list-metrics");
-      const filled = item.acquisition.filter((row) => String(row.partner || "").trim() && row.kind);
-      const newAffiliates = filled.filter((row) => row.kind === "newAffiliate").length;
-      const newDeals = filled.filter((row) => row.kind === "newDeal").length;
-      const reactivated = filled.filter((row) => row.kind === "reactivated").length;
+      const { newAffiliates, newDeals, reactivated } = acquisitionTotals(item);
       metrics.append(makeElement("span", "", `FTD ${item.metrics.ftd}`));
       metrics.append(makeElement("span", "", `Активные ${item.metrics.activeAffiliates}`));
       metrics.append(makeElement("span", "", `Новые партнёры ${newAffiliates}`));
@@ -752,24 +1118,41 @@ function renderSubmittedReport(item) {
   header.append(titleBlock, noteControl(item, "report:general", "Комментарий к отчёту"));
   sheet.append(header);
 
-  const results = detailSection(item, "01", "Результат недели", "section:results");
-  const resultGrid = makeElement("div", "detail-metrics");
+  const totalsWrap = makeElement("section", `submitted-totals-wrap${commentsFor(item, "section:results").length ? " has-note" : ""}`);
+  const totalsHeading = makeElement("div", "submitted-totals-heading");
+  totalsHeading.append(makeElement("h3", "", "Цифры недели"), noteControl(item, "section:results", "Комментарий к цифрам"));
+  const resultGrid = makeElement("div", "submitted-totals");
+  const filled = acquisitionTotals(item);
   resultGrid.append(
     detailValue(item, "FTD", item.metrics.ftd, "result:ftd"),
     detailValue(item, "Активные партнёры", item.metrics.activeAffiliates, "result:active"),
+    detailValue(item, "Новые партнёры", filled.newAffiliates, "acquisition:new"),
+    detailValue(item, "Новые сделки", filled.newDeals, "acquisition:deals"),
+    detailValue(item, "Реактивации", filled.reactivated, "acquisition:reactivated"),
   );
-  results.append(resultGrid);
-  sheet.append(results);
+  totalsWrap.append(totalsHeading, resultGrid);
+  sheet.append(totalsWrap);
+
+  const planReview = detailSection(item, "01", "План с прошлой недели", "section:previous-plan");
+  if (item.planReview?.sourceReportId) {
+    planReview.append(makeElement("p", "detail-source", `План из отчёта за ${weekRange(item.planReview.sourceWeekStart)}`));
+  }
+  if (!item.planReview?.rows?.length) {
+    planReview.append(emptyDetail(item.version >= 7 ? "За прошлую неделю план не найден." : "В этом отчёте прошлый план ещё не фиксировался."));
+  } else {
+    item.planReview.rows.forEach((row) => {
+      planReview.append(detailRow(
+        item,
+        row.text,
+        planStatusLabels[row.status] || "Результат не указан",
+        [{ label: "Комментарий", value: row.comment }],
+        `previous-plan:${row.id}`,
+      ));
+    });
+  }
+  sheet.append(planReview);
 
   const acquisition = detailSection(item, "02", "Привлечение", "section:acquisition");
-  const acquisitionCounts = makeElement("div", "detail-metrics detail-metrics-three");
-  const filled = item.acquisition.filter((row) => row.partner && row.kind);
-  acquisitionCounts.append(
-    detailValue(item, "Новые партнёры", filled.filter((row) => row.kind === "newAffiliate").length, "acquisition:new"),
-    detailValue(item, "Новые сделки", filled.filter((row) => row.kind === "newDeal").length, "acquisition:deals"),
-    detailValue(item, "Реактивированы", filled.filter((row) => row.kind === "reactivated").length, "acquisition:reactivated"),
-  );
-  acquisition.append(acquisitionCounts);
   if (item.noSearch) acquisition.append(detailRow(item, "Поиском не занимался", "", [{ label: "Чем был занят", value: item.noSearchReason }], "acquisition:no-search"));
   item.acquisition.forEach((row) => {
     acquisition.append(detailRow(item, row.partner, `${kindLabels[row.kind] || "Тип не указан"} · ${row.geo} · ${row.source}`, [{ label: "Статус", value: row.result }], `acquisition:${row.id}`));
@@ -830,7 +1213,7 @@ function refreshCommentThread(item, target) {
   if (!current) return;
   const replacement = noteControl(item, target, current.dataset.noteLabel || "Комментарий");
   current.replaceWith(replacement);
-  replacement.closest(".detail-row, .detail-value, .submitted-section")?.classList.add("has-note");
+  replacement.closest(".detail-row, .detail-value, .submitted-section, .submitted-totals-wrap")?.classList.add("has-note");
   const editor = $(".note-editor", replacement);
   editor.hidden = false;
   replacement.classList.add("is-open");
@@ -918,6 +1301,10 @@ app.addEventListener("input", (event) => {
   }
   if (!report) return;
   dismissValidation();
+  if (target.matches("[data-plan-review-field]")) {
+    updatePlanReviewField(target);
+    return;
+  }
   if (target.matches("[data-row] [data-field]")) {
     updateRow(target);
     return;
@@ -940,8 +1327,17 @@ app.addEventListener("input", (event) => {
 
 app.addEventListener("change", (event) => {
   const target = event.target;
+  if (target.id === "results-week") {
+    selectedResultsWeek = target.value;
+    renderTeamResults();
+    return;
+  }
   if (!report || $("#editor-view").hidden) return;
   dismissValidation();
+  if (target.matches("[data-plan-review-field]")) {
+    updatePlanReviewField(target);
+    return;
+  }
   if (target.matches("[data-row] [data-field]")) {
     updateRow(target);
     return;
@@ -949,6 +1345,16 @@ app.addEventListener("change", (event) => {
   if (target.id === "week-start") {
     report.weekStart = target.value;
     target.classList.remove("is-invalid");
+    syncPlanReview();
+    renderPlanReview();
+    persistState();
+    return;
+  }
+  if (target.id === "manager-name") {
+    report.manager = target.value;
+    target.classList.remove("is-invalid");
+    syncPlanReview();
+    renderPlanReview();
     persistState();
     return;
   }
@@ -957,7 +1363,6 @@ app.addEventListener("change", (event) => {
     "no-existing": "noExisting",
     "no-problems": "noProblems",
     "no-top-problems": "noTopProblems",
-    "no-achievements": "noAchievements",
   };
   const key = checkboxBindings[target.id];
   if (!key) return;
@@ -1030,6 +1435,17 @@ app.addEventListener("click", (event) => {
     const willOpen = card.classList.contains("is-collapsed");
     collapseAllSections(willOpen ? card : null);
     closeHelp();
+    return;
+  }
+  const planReviewToggle = event.target.closest("[data-toggle-plan-review]");
+  if (planReviewToggle) {
+    const row = planReviewToggle.closest("[data-plan-review-id]");
+    setPlanReviewCollapsed(row, !row.classList.contains("is-collapsed"));
+    return;
+  }
+  const collapsePlanReview = event.target.closest("[data-collapse-plan-review]");
+  if (collapsePlanReview) {
+    setPlanReviewCollapsed(collapsePlanReview.closest("[data-plan-review-id]"), true);
     return;
   }
   const rowToggle = event.target.closest("[data-toggle-row]");
