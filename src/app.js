@@ -4,6 +4,9 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const app = $("#app");
 const saveState = $("#save-state");
 const STORAGE_KEY = "weekly-affiliate-report:demo:v1";
+const BUILT_IN_REPORTS = Array.isArray(window.WEEKLY_AFFILIATE_DEMO_REPORTS)
+  ? window.WEEKLY_AFFILIATE_DEMO_REPORTS
+  : [];
 
 const listConfig = {
   acquisition: { container: "#acquisition-list", template: "#acquisition-template", stateKey: "acquisition" },
@@ -253,7 +256,7 @@ function normalizeReport(value, fallbackWeek = mondayFor()) {
     nextWeek: Array.isArray(value.nextWeek)
       ? value.nextWeek.map((row) => ({
           id: row.id || id(), collapsed: row.collapsed !== false,
-          plan: row.plan ?? row.action ?? "", update: row.update ?? row.result ?? "",
+          plan: row.plan ?? row.action ?? "",
         }))
       : [],
     priorities: normalizeCompactList(value.priorities),
@@ -269,7 +272,37 @@ function normalizeReport(value, fallbackWeek = mondayFor()) {
     updatedAt: value.updatedAt || base.updatedAt,
     status: value.status === "submitted" ? "submitted" : undefined,
     submittedAt: value.submittedAt || undefined,
+    isBuiltIn: value.isBuiltIn === true,
     comments: normalizeComments(value.comments, value.submittedAt || value.updatedAt || base.updatedAt, value),
+  };
+}
+
+function attachBuiltInReports(localState) {
+  const localReports = Array.isArray(localState.reports) ? localState.reports : [];
+  const localIds = new Set(localReports.map((item) => item.id));
+  const demoComments = localState.demoComments && typeof localState.demoComments === "object"
+    ? localState.demoComments
+    : {};
+  const builtIns = BUILT_IN_REPORTS
+    .map((item) => normalizeReport({
+      ...item,
+      status: "submitted",
+      isBuiltIn: true,
+      comments: demoComments[item.id] || item.comments,
+    }))
+    .filter((item) => !localIds.has(item.id));
+  return { ...localState, reports: [...localReports, ...builtIns], demoComments };
+}
+
+function stateForStorage(source = state) {
+  const demoComments = { ...(source.demoComments || {}) };
+  (source.reports || []).filter((item) => item.isBuiltIn).forEach((item) => {
+    demoComments[item.id] = item.comments || {};
+  });
+  return {
+    ...source,
+    reports: (source.reports || []).filter((item) => !item.isBuiltIn),
+    demoComments,
   };
 }
 
@@ -281,9 +314,12 @@ function loadState() {
         version: 1,
         draft: stored.draft ? normalizeReport(stored.draft) : null,
         reports: Array.isArray(stored.reports)
-          ? stored.reports.map((item) => normalizeReport({ ...item, status: "submitted" }))
+          ? stored.reports
+            .map((item) => normalizeReport({ ...item, status: "submitted" }))
+            .filter((item) => !item.isBuiltIn)
           : [],
         commentAuthor: typeof stored.commentAuthor === "string" ? stored.commentAuthor : "",
+        demoComments: stored.demoComments && typeof stored.demoComments === "object" ? stored.demoComments : {},
       };
       const reportsToCheck = [stored.draft, ...(Array.isArray(stored.reports) ? stored.reports : [])].filter(Boolean);
       const hasLegacyComments = reportsToCheck.some((item) => {
@@ -291,20 +327,25 @@ function loadState() {
         return Object.keys(comments).some((target) => target !== "report:general")
           || Object.values(comments).some((thread) => typeof thread === "string" && thread.trim());
       });
-      if (hasLegacyComments) {
+      const hasLegacyNextWeekUpdates = reportsToCheck.some((item) =>
+        (Array.isArray(item.nextWeek) ? item.nextWeek : []).some((row) =>
+          Object.prototype.hasOwnProperty.call(row || {}, "update")
+          || Object.prototype.hasOwnProperty.call(row || {}, "result")),
+      );
+      if (hasLegacyComments || hasLegacyNextWeekUpdates) {
         try {
           localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizedState));
         } catch {
           // Отчёт всё равно откроется; повторим сохранение при следующем изменении.
         }
       }
-      return normalizedState;
+      return attachBuiltInReports(normalizedState);
     }
   } catch {
     // Начинаем с чистой демо-версии, если старое локальное состояние повреждено.
   }
 
-  return { version: 1, draft: null, reports: [], commentAuthor: "" };
+  return attachBuiltInReports({ version: 1, draft: null, reports: [], commentAuthor: "", demoComments: {} });
 }
 
 function persistState({ immediate = false } = {}) {
@@ -316,7 +357,7 @@ function persistState({ immediate = false } = {}) {
   clearTimeout(saveTimer);
   const save = () => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(stateForStorage(state)));
       saveState.textContent = "Все сохранено";
       return true;
     } catch {
@@ -591,7 +632,7 @@ function fillRowSummary(type, item, node) {
     secondary.textContent = short([item.problem, item.resolution].filter(Boolean).join(" · "), "Проблема не заполнена");
   } else if (type === "nextWeek") {
     main.textContent = short(item.plan, "Пункт плана не заполнен");
-    secondary.textContent = item.update ? `Старый апдейт: ${short(item.update)}` : "План на следующую неделю";
+    secondary.textContent = "План на следующую неделю";
   } else {
     main.textContent = short(item.text, `${compactLabels[type]} не заполнен`);
     secondary.textContent = "";
@@ -842,7 +883,7 @@ function submitReport() {
   snapshot.noAchievements = false;
   const nextState = { ...state, reports: [snapshot, ...state.reports], draft: null };
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(stateForStorage(nextState)));
   } catch {
     showValidation([{
       message: "Не удалось сохранить отчёт. Черновик остался на месте, попробуй ещё раз в чистом браузере.",
@@ -1191,7 +1232,7 @@ function renderSubmittedReport(item) {
 
   const nextWeek = detailSection(item, "04", "Следующая неделя", "section:next-week");
   item.nextWeek.forEach((row) => {
-    nextWeek.append(detailRow(item, row.plan, "", row.update ? [{ label: "Апдейт", value: row.update }] : [], `next-week:${row.id}`));
+    nextWeek.append(detailRow(item, row.plan, "", [], `next-week:${row.id}`));
   });
   sheet.append(nextWeek);
 
@@ -1333,6 +1374,10 @@ app.addEventListener("input", (event) => {
   if (path.length === 1) report[path[0]] = target.value;
   else report[path[0]][path[1]] = target.value;
   target.classList.remove("is-invalid");
+  if (target.id === "manager-name") {
+    syncPreviousSearchPlan();
+    renderAcquisitionSearchPlan();
+  }
   if (target.id === "no-search-reason") renderOptionalFields();
   persistState();
 });

@@ -11,7 +11,7 @@ await rm(distDir, { recursive: true, force: true });
 await mkdir(staticDir, { recursive: true });
 await mkdir(serverDir, { recursive: true });
 
-const files = ["index.html", "styles.css", "app.js"];
+const files = ["index.html", "styles.css", "demo-reports.js", "app.js"];
 const assets = {};
 
 for (const file of files) {
