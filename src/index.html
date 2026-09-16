@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light" />
     <title>Weekly Affiliate Report</title>
-    <link rel="stylesheet" href="styles.css?v=8" />
+    <link rel="stylesheet" href="styles.css?v=9" />
   </head>
   <body>
     <div id="app" class="app">
@@ -90,7 +90,7 @@
             <div>
               <label class="field-label" for="week-start">Неделя</label>
               <input id="week-start" class="week-picker" type="date" />
-              <p class="period-note">Выбери понедельник отчётной недели. План подтянется из отчёта этого менеджера ровно неделей раньше.</p>
+              <p class="period-note">Выбери понедельник отчётной недели. Если в прошлом отчёте был план по поиску, он покажется ниже.</p>
             </div>
             <div class="report-meta">
               <label class="field-label" for="manager-name">Менеджер</label>
@@ -106,28 +106,11 @@
             <div class="weekly-total"><span>Новые сделки</span><strong id="new-deals-count">0</strong></div>
             <div class="weekly-total"><span>Реактивации</span><strong id="reactivated-count">0</strong></div>
           </section>
+          <p id="previous-plan-info" class="previous-plan-info" hidden></p>
 
           <article class="report-card is-collapsed" data-section-card>
             <div class="card-heading">
-              <button class="section-toggle" type="button" data-toggle-section aria-expanded="false"><span class="section-number">01</span><h2>План с прошлой недели</h2><span class="section-chevron">⌄</span></button>
-              <button class="help-button" type="button" data-help="help-previous-plan" aria-label="Как отчитаться по прошлому плану" aria-expanded="false">?</button>
-              <div id="help-previous-plan" class="help-popover" hidden>
-                <strong>Что вводить</strong>
-                <p>План подтягивается из предыдущего отчёта этого менеджера. По каждому пункту выбери результат и коротко напиши, что получилось или почему не получилось.</p>
-                <strong>Пример</strong>
-                <p>Выполнено. Вернул 3 из 5 партнёров, двое пока не ответили.</p>
-              </div>
-            </div>
-            <div class="section-body">
-              <p id="previous-plan-source" class="previous-plan-source"></p>
-              <div id="previous-plan-list" class="previous-plan-list"></div>
-              <p id="previous-plan-empty" class="previous-plan-empty"></p>
-            </div>
-          </article>
-
-          <article class="report-card is-collapsed" data-section-card>
-            <div class="card-heading">
-              <button class="section-toggle" type="button" data-toggle-section aria-expanded="false"><span class="section-number">02</span><h2>Привлечение</h2><span class="section-chevron">⌄</span></button>
+              <button class="section-toggle" type="button" data-toggle-section aria-expanded="false"><span class="section-number">01</span><h2>Привлечение</h2><span class="section-chevron">⌄</span></button>
               <button class="help-button" type="button" data-help="help-acquisition" aria-label="Что заполнять в привлечении" aria-expanded="false">?</button>
               <div id="help-acquisition" class="help-popover" hidden>
                 <strong>Что вводить</strong>
@@ -145,13 +128,16 @@
                 </label>
               </div>
               <div id="acquisition-list" class="dynamic-list list-with-offset"></div>
-              <button class="button button-add" data-add="acquisition" type="button">+ Добавить партнёра</button>
+              <div class="block-actions">
+                <button class="button button-add" data-add="acquisition" type="button">+ Добавить партнёра</button>
+                <button class="button button-save" data-save-list="acquisition" type="button">Сохранить</button>
+              </div>
             </div>
           </article>
 
           <article class="report-card is-collapsed" data-section-card>
             <div class="card-heading">
-              <button class="section-toggle" type="button" data-toggle-section aria-expanded="false"><span class="section-number">03</span><h2>Текущие партнёры</h2><span class="section-chevron">⌄</span></button>
+              <button class="section-toggle" type="button" data-toggle-section aria-expanded="false"><span class="section-number">02</span><h2>Текущие партнёры</h2><span class="section-chevron">⌄</span></button>
               <button class="help-button" type="button" data-help="help-existing" aria-label="Что заполнять по текущим партнёрам" aria-expanded="false">?</button>
               <div id="help-existing" class="help-popover" hidden>
                 <strong>Что вводить</strong>
@@ -168,14 +154,17 @@
                   <span><strong id="fallen-count">0</strong> упали</span>
                 </div>
                 <div id="existing-list" class="dynamic-list"></div>
-                <button class="button button-add" data-add="existing" type="button">+ Добавить изменение</button>
+                <div class="block-actions">
+                  <button class="button button-add" data-add="existing" type="button">+ Добавить изменение</button>
+                  <button class="button button-save" data-save-list="existing" type="button">Сохранить</button>
+                </div>
               </div>
             </div>
           </article>
 
           <article class="report-card is-collapsed" data-section-card>
             <div class="card-heading">
-              <button class="section-toggle" type="button" data-toggle-section aria-expanded="false"><span class="section-number">04</span><h2>Проблемы</h2><span class="section-chevron">⌄</span></button>
+              <button class="section-toggle" type="button" data-toggle-section aria-expanded="false"><span class="section-number">03</span><h2>Проблемы</h2><span class="section-chevron">⌄</span></button>
               <button class="help-button" type="button" data-help="help-problems" aria-label="Что заполнять в проблемах" aria-expanded="false">?</button>
               <div id="help-problems" class="help-popover" hidden>
                 <strong>Что вводить</strong>
@@ -188,18 +177,21 @@
               <label class="empty-option"><input id="no-problems" type="checkbox" /> Проблем нет</label>
               <div data-optional-content="noProblems">
                 <div id="problems-list" class="dynamic-list list-with-offset"></div>
-                <button class="button button-add" data-add="problems" type="button">+ Добавить проблему</button>
+                <div class="block-actions">
+                  <button class="button button-add" data-add="problems" type="button">+ Добавить проблему</button>
+                  <button class="button button-save" data-save-list="problems" type="button">Сохранить</button>
+                </div>
               </div>
             </div>
           </article>
 
           <article class="report-card is-collapsed" data-section-card>
             <div class="card-heading">
-              <button class="section-toggle" type="button" data-toggle-section aria-expanded="false"><span class="section-number">05</span><h2>Следующая неделя</h2><span class="section-chevron">⌄</span></button>
+              <button class="section-toggle" type="button" data-toggle-section aria-expanded="false"><span class="section-number">04</span><h2>Следующая неделя</h2><span class="section-chevron">⌄</span></button>
               <button class="help-button" type="button" data-help="help-next-week" aria-label="Что заполнять в плане на следующую неделю" aria-expanded="false">?</button>
               <div id="help-next-week" class="help-popover" hidden>
                 <strong>Что вводить</strong>
-                <p>Построчный план на новую неделю. В следующем отчёте эти пункты подтянутся автоматически, и по каждому нужно будет дать результат.</p>
+                <p>План на новую неделю. Число из поля «План по поиску» в следующем отчёте покажется обычной информационной строкой.</p>
                 <strong>Пример</strong>
                 <p>Реактивировать 5 партнёров по BR.</p>
               </div>
@@ -209,13 +201,16 @@
                 <input id="search-plan" type="number" min="0" inputmode="numeric" placeholder="0" />
               </label>
               <div id="next-week-list" class="dynamic-list list-with-offset"></div>
-              <button class="button button-add" data-add="nextWeek" type="button">+ Добавить пункт</button>
+              <div class="block-actions">
+                <button class="button button-add" data-add="nextWeek" type="button">+ Добавить пункт</button>
+                <button class="button button-save" data-save-list="nextWeek" type="button">Сохранить</button>
+              </div>
             </div>
           </article>
 
           <article class="report-card summary-card is-collapsed" data-section-card>
             <div class="card-heading">
-              <button class="section-toggle" type="button" data-toggle-section aria-expanded="false"><span class="section-number">06</span><h2>Главное за неделю</h2><span class="section-chevron">⌄</span></button>
+              <button class="section-toggle" type="button" data-toggle-section aria-expanded="false"><span class="section-number">05</span><h2>Главное за неделю</h2><span class="section-chevron">⌄</span></button>
               <button class="help-button" type="button" data-help="help-summary" aria-label="Что заполнять в главном за неделю" aria-expanded="false">?</button>
               <div id="help-summary" class="help-popover" hidden>
                 <strong>Что вводить</strong>
@@ -229,20 +224,29 @@
                 <section>
                   <h3>Топ приоритетов на неделю <span class="required-tag">обязательно</span></h3>
                   <div id="priorities-list" class="compact-list"></div>
-                  <button class="text-button" data-add="priorities" type="button">+ Добавить</button>
+                  <div class="compact-actions">
+                    <button class="text-button" data-add="priorities" type="button">+ Добавить</button>
+                    <button class="text-button text-button-save" data-save-list="priorities" type="button">Сохранить</button>
+                  </div>
                 </section>
                 <section>
                   <h3>Топ проблем</h3>
                   <label class="empty-option empty-option-small"><input id="no-top-problems" type="checkbox" /> Проблем нет</label>
                   <div data-optional-content="noTopProblems">
                     <div id="top-problems-list" class="compact-list"></div>
-                    <button class="text-button" data-add="topProblems" type="button">+ Добавить</button>
+                    <div class="compact-actions">
+                      <button class="text-button" data-add="topProblems" type="button">+ Добавить</button>
+                      <button class="text-button text-button-save" data-save-list="topProblems" type="button">Сохранить</button>
+                    </div>
                   </div>
                 </section>
                 <section>
                   <h3>Топ достижений <span class="required-tag">обязательно</span></h3>
                   <div id="achievements-list" class="compact-list"></div>
-                  <button class="text-button" data-add="achievements" type="button">+ Добавить</button>
+                  <div class="compact-actions">
+                    <button class="text-button" data-add="achievements" type="button">+ Добавить</button>
+                    <button class="text-button text-button-save" data-save-list="achievements" type="button">Сохранить</button>
+                  </div>
                 </section>
               </div>
             </div>
@@ -278,7 +282,6 @@
             <label>Источник<input data-field="source" type="text" placeholder="Facebook" required /></label>
           </div>
           <label class="editor-block">Статус<textarea data-field="result" rows="2" placeholder="Что обсуждаем или согласовали" required></textarea></label>
-          <button class="collapse-button" data-collapse-row type="button">Свернуть</button>
         </div>
       </div>
     </template>
@@ -303,7 +306,6 @@
             <label class="editor-block">Причина<textarea data-field="reason" rows="2" placeholder="Почему вырос или упал" required></textarea></label>
             <label class="editor-block">Что делаем<textarea data-field="action" rows="2" placeholder="Что уже сделали или будем делать" required></textarea></label>
           </div>
-          <button class="collapse-button" data-collapse-row type="button">Свернуть</button>
         </div>
       </div>
     </template>
@@ -326,7 +328,6 @@
             <label class="editor-block">Проблема<textarea data-field="problem" rows="2" placeholder="В чём затык" required></textarea></label>
             <label class="editor-block">Решение / статус<textarea data-field="resolution" rows="2" placeholder="Как решил, решаешь или будешь решать" required></textarea></label>
           </div>
-          <button class="collapse-button" data-collapse-row type="button">Свернуть</button>
         </div>
       </div>
     </template>
@@ -343,7 +344,6 @@
         </div>
         <div class="row-editor">
           <label class="editor-block">План<textarea data-field="plan" rows="2" placeholder="Что нужно сделать" required></textarea></label>
-          <button class="collapse-button" data-collapse-row type="button">Свернуть</button>
         </div>
       </div>
     </template>
@@ -360,11 +360,10 @@
         </div>
         <div class="row-editor">
           <label class="editor-block"><span class="visually-hidden">Текст</span><textarea data-field="text" rows="2" placeholder="Коротко и по факту" required></textarea></label>
-          <button class="collapse-button" data-collapse-row type="button">Свернуть</button>
         </div>
       </div>
     </template>
 
-    <script src="app.js?v=8" defer></script>
+    <script src="app.js?v=9" defer></script>
   </body>
 </html>

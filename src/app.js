@@ -21,9 +21,14 @@ const kindLabels = {
   reactivated: "Реактивирован",
 };
 
-const planStatusLabels = {
-  done: "Выполнено",
-  notDone: "Не выполнено",
+const listRequiredFields = {
+  acquisition: ["kind", "partner", "geo", "source", "result"],
+  existing: ["email", "geo", "movement", "reason", "action"],
+  problems: ["email", "problem", "resolution"],
+  nextWeek: ["plan"],
+  priorities: ["text"],
+  topProblems: ["text"],
+  achievements: ["text"],
 };
 
 let state = loadState();
@@ -54,11 +59,11 @@ function toDateInput(date) {
 function blankReport(weekStart = mondayFor()) {
   return {
     id: id(),
-    version: 7,
+    version: 8,
     weekStart,
     manager: "",
     metrics: { ftd: "", activeAffiliates: "", searchPlan: "" },
-    planReview: { sourceReportId: "", sourceWeekStart: "", rows: [] },
+    previousSearchPlan: "",
     acquisition: [],
     existing: [],
     problems: [],
@@ -82,7 +87,7 @@ function normalizeCompactList(value) {
   return value.map((row) => ({ id: row.id || id(), collapsed: row.collapsed !== false, text: row.text ?? "" }));
 }
 
-function normalizePlanReview(value) {
+function normalizeLegacyPlanReview(value) {
   const source = value && typeof value === "object" ? value : {};
   const rows = Array.isArray(source.rows)
     ? source.rows.map((row) => ({
@@ -101,9 +106,9 @@ function normalizePlanReview(value) {
   };
 }
 
-function normalizeComments(value, fallbackCreatedAt) {
+function normalizeComments(value, fallbackCreatedAt, reportValue = {}) {
   if (!value || typeof value !== "object") return {};
-  const comments = {};
+  const messagesById = new Map();
 
   Object.entries(value).forEach(([target, rawThread]) => {
     const rawMessages = Array.isArray(rawThread)
@@ -111,19 +116,96 @@ function normalizeComments(value, fallbackCreatedAt) {
       : typeof rawThread === "string" && rawThread.trim()
         ? [{ text: rawThread, author: "Без имени", createdAt: fallbackCreatedAt }]
         : [];
-    const messages = rawMessages
+    rawMessages
       .filter((message) => message && typeof message === "object" && String(message.text || "").trim())
-      .map((message) => ({
-        id: message.id || id(),
-        author: String(message.author || "Без имени").trim() || "Без имени",
-        text: String(message.text || "").trim(),
-        createdAt: message.createdAt || fallbackCreatedAt || new Date().toISOString(),
-        replyTo: typeof message.replyTo === "string" ? message.replyTo : "",
-      }));
-    if (messages.length) comments[target] = messages;
+      .forEach((message) => {
+        const normalized = {
+          id: message.id || id(),
+          author: String(message.author || "Без имени").trim() || "Без имени",
+          text: String(message.text || "").trim(),
+          createdAt: message.createdAt || fallbackCreatedAt || new Date().toISOString(),
+          replyTo: typeof message.replyTo === "string" ? message.replyTo : "",
+          context: typeof message.context === "string" && message.context.trim()
+            ? message.context.trim()
+            : commentContext(target, reportValue),
+        };
+        if (!messagesById.has(normalized.id)) messagesById.set(normalized.id, normalized);
+      });
   });
 
-  return comments;
+  const messages = [...messagesById.values()].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+  return messages.length ? { "report:general": messages } : {};
+}
+
+function commentContext(target, reportValue = {}) {
+  if (!target || target === "report:general") return "";
+  const exact = {
+    "section:results": "Цифры недели",
+    "result:ftd": "FTD",
+    "result:active": "Активные партнёры",
+    "acquisition:new": "Новые партнёры",
+    "acquisition:deals": "Новые сделки",
+    "acquisition:reactivated": "Реактивации",
+    "section:previous-plan": "План с прошлой недели",
+    "section:acquisition": "Привлечение",
+    "acquisition:no-search": "Привлечение",
+    "section:existing": "Текущие партнёры",
+    "section:problems": "Проблемы",
+    "section:next-week": "Следующая неделя",
+    "next-week:search-plan": "План по поиску",
+    "section:summary": "Главное за неделю",
+  };
+  if (exact[target]) return exact[target];
+  const rowId = target.slice(target.indexOf(":") + 1);
+  const findRow = (rows) => (Array.isArray(rows) ? rows.find((row) => row.id === rowId) : null);
+  if (target.startsWith("previous-plan:")) {
+    const legacyRows = reportValue.legacyPlanReview?.rows || reportValue.planReview?.rows || reportValue.previousPlanReviews?.rows;
+    const row = findRow(legacyRows);
+    return row?.text ? `План: ${short(row.text)}` : "План с прошлой недели";
+  }
+  if (target.startsWith("acquisition:")) {
+    const row = findRow(reportValue.acquisition);
+    return row?.partner ? `Привлечение: ${short(row.partner)}` : "Партнёр в привлечении";
+  }
+  if (target.startsWith("existing:")) {
+    const row = findRow(reportValue.existing);
+    const partner = row?.email || row?.partner;
+    return partner ? `Текущий партнёр: ${short(partner)}` : "Текущий партнёр";
+  }
+  if (target.startsWith("problem:")) {
+    const row = findRow(reportValue.problems);
+    const partner = row?.email || row?.subject;
+    return partner ? `Проблема: ${short(partner)}` : "Проблема";
+  }
+  if (target.startsWith("next-week:")) {
+    const row = findRow(reportValue.nextWeek);
+    const plan = row?.plan || row?.action;
+    return plan ? `План: ${short(plan)}` : "Следующая неделя";
+  }
+  if (target.startsWith("priority:")) {
+    const row = findRow(reportValue.priorities);
+    return row?.text ? `Приоритет: ${short(row.text)}` : "Приоритет";
+  }
+  if (target.startsWith("top-problem:")) {
+    const row = findRow(reportValue.topProblems);
+    return row?.text ? `Топ проблем: ${short(row.text)}` : "Топ проблем";
+  }
+  if (target.startsWith("achievement:")) {
+    const row = findRow(reportValue.achievements);
+    return row?.text ? `Достижение: ${short(row.text)}` : "Достижение";
+  }
+  return "Старый комментарий";
+}
+
+function previousSearchPlanFrom(value) {
+  const direct = value?.previousSearchPlan;
+  if (Object.prototype.hasOwnProperty.call(value || {}, "previousSearchPlan")) {
+    return numeric(direct) > 0 ? direct : "";
+  }
+  const legacyRows = value?.legacyPlanReview?.rows || value?.planReview?.rows || value?.previousPlanReviews?.rows || [];
+  const legacyRow = legacyRows.find((row) => row.sourceKey === "search-plan");
+  const match = String(legacyRow?.text || "").match(/\d+/);
+  return match ? match[0] : "";
 }
 
 function normalizeReport(value, fallbackWeek = mondayFor()) {
@@ -142,7 +224,10 @@ function normalizeReport(value, fallbackWeek = mondayFor()) {
       activeAffiliates: sourceMetrics.activeAffiliates ?? "",
       searchPlan: sourceMetrics.searchPlan ?? "",
     },
-    planReview: normalizePlanReview(value.planReview || value.previousPlanReviews),
+    previousSearchPlan: previousSearchPlanFrom(value),
+    legacyPlanReview: value.legacyPlanReview || value.planReview || value.previousPlanReviews
+      ? normalizeLegacyPlanReview(value.legacyPlanReview || value.planReview || value.previousPlanReviews)
+      : undefined,
     acquisition: Array.isArray(value.acquisition)
       ? value.acquisition.map((row) => ({
           id: row.id || id(), collapsed: row.collapsed !== false, kind: row.kind ?? "",
@@ -183,7 +268,7 @@ function normalizeReport(value, fallbackWeek = mondayFor()) {
     updatedAt: value.updatedAt || base.updatedAt,
     status: value.status === "submitted" ? "submitted" : undefined,
     submittedAt: value.submittedAt || undefined,
-    comments: normalizeComments(value.comments, value.submittedAt || value.updatedAt || base.updatedAt),
+    comments: normalizeComments(value.comments, value.submittedAt || value.updatedAt || base.updatedAt, value),
   };
 }
 
@@ -200,8 +285,11 @@ function loadState() {
         commentAuthor: typeof stored.commentAuthor === "string" ? stored.commentAuthor : "",
       };
       const reportsToCheck = [stored.draft, ...(Array.isArray(stored.reports) ? stored.reports : [])].filter(Boolean);
-      const hasLegacyComments = reportsToCheck.some((item) => Object.values(item.comments || {})
-        .some((thread) => typeof thread === "string" && thread.trim()));
+      const hasLegacyComments = reportsToCheck.some((item) => {
+        const comments = item.comments || {};
+        return Object.keys(comments).some((target) => target !== "report:general")
+          || Object.values(comments).some((thread) => typeof thread === "string" && thread.trim());
+      });
       if (hasLegacyComments) {
         try {
           localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizedState));
@@ -330,40 +418,11 @@ function previousReportFor(manager, weekStart) {
     .sort((a, b) => String(b.submittedAt || "").localeCompare(String(a.submittedAt || "")))[0] || null;
 }
 
-function previousPlanRows(source) {
-  if (!source) return [];
-  const rows = [];
-  if (numeric(source.metrics?.searchPlan) > 0) {
-    rows.push({ sourceKey: "search-plan", text: `Поиск: ${source.metrics.searchPlan} новых партнёров` });
-  }
-  (source.nextWeek || []).forEach((row) => {
-    const text = String(row.plan || "").trim();
-    if (text) rows.push({ sourceKey: `next-week:${row.id}`, text });
-  });
-  return rows;
-}
-
-function syncPlanReview() {
-  report.planReview ||= { sourceReportId: "", sourceWeekStart: "", rows: [] };
+function syncPreviousSearchPlan() {
   const source = previousReportFor(report.manager, report.weekStart);
-  const sourceId = source?.id || "";
-  const sourceWeekStart = source?.weekStart || shiftWeek(report.weekStart, -7);
-  if (report.planReview.sourceReportId === sourceId && report.planReview.sourceWeekStart === sourceWeekStart) return false;
-
-  report.planReview = {
-    sourceReportId: sourceId,
-    sourceWeekStart,
-    rows: previousPlanRows(source).map((sourceRow) => {
-      return {
-        id: id(),
-        sourceKey: sourceRow.sourceKey,
-        text: sourceRow.text,
-        status: "",
-        comment: "",
-        collapsed: true,
-      };
-    }),
-  };
+  const nextValue = numeric(source?.metrics?.searchPlan) > 0 ? source.metrics.searchPlan : "";
+  if (String(report.previousSearchPlan ?? "") === String(nextValue)) return false;
+  report.previousSearchPlan = nextValue;
   return true;
 }
 
@@ -393,7 +452,7 @@ function renderNav() {
 
 function renderReport() {
   renderManagerOptions();
-  const planChanged = syncPlanReview();
+  const planChanged = syncPreviousSearchPlan();
   $("#week-start").value = report.weekStart;
   $("#manager-name").value = report.manager;
   $("#ftd").value = report.metrics.ftd;
@@ -405,7 +464,7 @@ function renderReport() {
   $("#no-problems").checked = report.noProblems;
   $("#no-top-problems").checked = report.noTopProblems;
   Object.keys(listConfig).forEach(renderList);
-  renderPlanReview();
+  renderPreviousSearchPlan();
   renderAcquisitionSummary();
   renderMovementSummary();
   renderOptionalFields();
@@ -428,108 +487,12 @@ function renderManagerOptions() {
   });
 }
 
-function renderPlanReview() {
-  const list = $("#previous-plan-list");
-  const empty = $("#previous-plan-empty");
-  const source = $("#previous-plan-source");
-  list.replaceChildren();
-
-  if (!normalizeManagerName(report.manager)) {
-    source.textContent = "";
-    empty.textContent = "Укажи менеджера, чтобы подтянуть план.";
-    return;
-  }
-  if (!report.planReview.sourceReportId) {
-    source.textContent = "";
-    empty.textContent = `За прошлую неделю (${weekRange(report.planReview.sourceWeekStart)}) план не найден.`;
-    return;
-  }
-  source.textContent = `План из отчёта за ${weekRange(report.planReview.sourceWeekStart)}`;
-  if (!report.planReview.rows.length) {
-    empty.textContent = "В прошлом отчёте план не был заполнен.";
-    return;
-  }
-  empty.textContent = "";
-
-  report.planReview.rows.forEach((item) => {
-    const row = makeElement("div", `list-row plan-review-row${item.collapsed ? " is-collapsed" : ""}`);
-    row.dataset.planReviewId = item.id;
-    const summary = makeElement("div", "row-summary");
-    const toggle = makeElement("button", "row-toggle plan-review-toggle");
-    toggle.type = "button";
-    toggle.dataset.togglePlanReview = item.id;
-    toggle.setAttribute("aria-expanded", String(!item.collapsed));
-    toggle.append(
-      makeElement("span", "row-summary-main", short(item.text, "Пункт плана")),
-      makeElement("span", `plan-status${item.status ? ` is-${item.status}` : ""}`, planStatusLabels[item.status] || "Нужен отчёт"),
-      makeElement("span", "row-chevron", "⌄"),
-    );
-    summary.append(toggle);
-
-    const editor = makeElement("div", "row-editor plan-review-editor");
-    const planText = makeElement("p", "plan-review-text", item.text);
-    const fields = makeElement("div", "plan-review-fields");
-    const statusLabel = makeElement("label", "");
-    statusLabel.append(document.createTextNode("Результат"));
-    const select = makeElement("select", "");
-    select.dataset.planReviewField = "status";
-    select.required = true;
-    [["", "Выбрать"], ["done", "Выполнено"], ["notDone", "Не выполнено"]].forEach(([value, label]) => {
-      const option = makeElement("option", "", label);
-      option.value = value;
-      select.append(option);
-    });
-    select.value = item.status;
-    statusLabel.append(select);
-    const commentLabel = makeElement("label", "plan-review-comment");
-    commentLabel.append(document.createTextNode("Комментарий"));
-    const textarea = makeElement("textarea", "");
-    textarea.dataset.planReviewField = "comment";
-    textarea.rows = 2;
-    textarea.required = true;
-    textarea.placeholder = "Что сделано или почему не сделано";
-    textarea.value = item.comment;
-    commentLabel.append(textarea);
-    fields.append(statusLabel, commentLabel);
-    const collapse = makeElement("button", "collapse-button", "Свернуть");
-    collapse.type = "button";
-    collapse.dataset.collapsePlanReview = item.id;
-    editor.append(planText, fields, collapse);
-    row.append(summary, editor);
-    list.append(row);
-  });
-}
-
-function updatePlanReviewField(target) {
-  const row = target.closest("[data-plan-review-id]");
-  const item = report.planReview.rows.find((candidate) => candidate.id === row?.dataset.planReviewId);
-  if (!item) return;
-  item[target.dataset.planReviewField] = target.value;
-  target.classList.remove("is-invalid");
-  const status = $(".plan-status", row);
-  if (status) {
-    status.className = `plan-status${item.status ? ` is-${item.status}` : ""}`;
-    status.textContent = planStatusLabels[item.status] || "Нужен отчёт";
-  }
-  persistState();
-}
-
-function setPlanReviewCollapsed(row, collapsed) {
-  const item = report.planReview.rows.find((candidate) => candidate.id === row?.dataset.planReviewId);
-  if (!item) return;
-  if (!collapsed) {
-    report.planReview.rows.forEach((candidate) => { candidate.collapsed = candidate.id !== item.id; });
-    $$('[data-plan-review-id]', $("#previous-plan-list")).forEach((other) => {
-      const current = other.dataset.planReviewId === item.id;
-      other.classList.toggle("is-collapsed", !current);
-      $("[data-toggle-plan-review]", other)?.setAttribute("aria-expanded", String(current));
-    });
-  }
-  item.collapsed = collapsed;
-  row.classList.toggle("is-collapsed", collapsed);
-  $("[data-toggle-plan-review]", row)?.setAttribute("aria-expanded", String(!collapsed));
-  if (!collapsed) $("[data-plan-review-field]", row)?.focus();
-  persistState();
+function renderPreviousSearchPlan() {
+  const info = $("#previous-plan-info");
+  const value = String(report.previousSearchPlan ?? "").trim();
+  const hasPlan = numeric(value) > 0;
+  info.hidden = !hasPlan;
+  info.textContent = hasPlan ? `План с прошлой недели: ${value}` : "";
 }
 
 function renderOptionalFields() {
@@ -566,6 +529,49 @@ function renderList(type) {
     fillRowSummary(type, item, node);
     container.append(node);
   });
+  updateListSaveButton(type);
+}
+
+function updateListSaveButton(type) {
+  const config = listConfig[type];
+  const hasOpenRow = report[config.stateKey].some((item) => !item.collapsed);
+  $$(`[data-save-list="${type}"]`).forEach((button) => { button.disabled = !hasOpenRow; });
+}
+
+function listFieldIsValid(key, value) {
+  const text = String(value ?? "").trim();
+  return Boolean(text) && (key !== "geo" || /^[A-Za-z]{2}$/.test(text));
+}
+
+function firstInvalidListField(type, item) {
+  return listRequiredFields[type].find((key) => !listFieldIsValid(key, item[key])) || "";
+}
+
+function saveList(type) {
+  const config = listConfig[type];
+  const container = $(config.container);
+  const openRows = $$('[data-row]:not(.is-collapsed)', container);
+  let firstInvalid = null;
+
+  openRows.forEach((row) => {
+    $$('[data-field]', row).forEach((field) => {
+      const valid = listFieldIsValid(field.dataset.field, field.value);
+      field.classList.toggle("is-invalid", !valid);
+      if (!valid && !firstInvalid) firstInvalid = field;
+    });
+  });
+
+  if (firstInvalid) {
+    saveState.textContent = "Заполни строку";
+    firstInvalid.focus();
+    return false;
+  }
+
+  if (!openRows.length) return true;
+  report[config.stateKey].forEach((item) => { item.collapsed = true; });
+  renderList(type);
+  persistState();
+  return true;
 }
 
 function fillRowSummary(type, item, node) {
@@ -584,7 +590,7 @@ function fillRowSummary(type, item, node) {
     secondary.textContent = short([item.problem, item.resolution].filter(Boolean).join(" · "), "Проблема не заполнена");
   } else if (type === "nextWeek") {
     main.textContent = short(item.plan, "Пункт плана не заполнен");
-    secondary.textContent = item.update ? `Старый апдейт: ${short(item.update)}` : "Перейдёт в следующий отчёт";
+    secondary.textContent = item.update ? `Старый апдейт: ${short(item.update)}` : "План на следующую неделю";
   } else {
     main.textContent = short(item.text, `${compactLabels[type]} не заполнен`);
     secondary.textContent = "";
@@ -604,7 +610,24 @@ function renderAcquisitionSummary() {
 }
 
 function addRow(type) {
+  if (!saveList(type)) return;
   const stateKey = listConfig[type].stateKey;
+  const incomplete = report[stateKey].find((item) => firstInvalidListField(type, item));
+  if (incomplete) {
+    report[stateKey].forEach((item) => { item.collapsed = item.id !== incomplete.id; });
+    renderList(type);
+    const row = $(`[data-row][data-type="${type}"][data-id="${incomplete.id}"]`);
+    const missingKey = firstInvalidListField(type, incomplete);
+    persistState({ immediate: true });
+    if (row) {
+      $$('[data-field]', row).forEach((field) => {
+        field.classList.toggle("is-invalid", !listFieldIsValid(field.dataset.field, field.value));
+      });
+      $(`[data-field="${missingKey}"]`, row)?.focus();
+    }
+    saveState.textContent = "Закончи строку";
+    return;
+  }
   report[stateKey].forEach((item) => { item.collapsed = true; });
   const fields = type === "acquisition"
     ? { kind: "", partner: "", geo: "", source: "", result: "" }
@@ -665,6 +688,7 @@ function setRowCollapsed(row, collapsed) {
   row.classList.toggle("is-collapsed", collapsed);
   $("[data-toggle-row]", row)?.setAttribute("aria-expanded", String(!collapsed));
   if (!collapsed) $("[data-field]", row)?.focus();
+  updateListSaveButton(type);
   persistState();
 }
 
@@ -709,20 +733,11 @@ function validateReport() {
   if (!isNonNegativeInteger(report.metrics.ftd)) addValidationError(errors, "FTD: целое число от 0", "#ftd", -1);
   if (!isNonNegativeInteger(report.metrics.activeAffiliates)) addValidationError(errors, "Активные партнёры: целое число от 0", "#active-affiliates", -1);
 
-  (report.planReview?.rows || []).forEach((row, index) => {
-    if (!hasValue(row.status)) {
-      addValidationError(errors, `Результат по плану, пункт ${index + 1}`, `[data-plan-review-id="${row.id}"] [data-plan-review-field="status"]`, 0);
-    }
-    if (!hasValue(row.comment)) {
-      addValidationError(errors, `Комментарий по плану, пункт ${index + 1}`, `[data-plan-review-id="${row.id}"] [data-plan-review-field="comment"]`, 0);
-    }
-  });
-
   if (!report.acquisition.length && !report.noSearch) {
-    addValidationError(errors, "Добавь результат привлечения или отметь «Поиском не занимался»", "#no-search", 1);
+    addValidationError(errors, "Добавь результат привлечения или отметь «Поиском не занимался»", "#no-search", 0);
   }
   if (report.noSearch && !hasValue(report.noSearchReason)) {
-    addValidationError(errors, "Чем был занят вместо поиска", "#no-search-reason", 1);
+    addValidationError(errors, "Чем был занят вместо поиска", "#no-search-reason", 0);
   }
   validateRows(errors, "acquisition", report.acquisition, [
     { key: "kind", label: "Тип привлечения" },
@@ -730,10 +745,10 @@ function validateReport() {
     { key: "geo", label: "GEO из двух букв", rule: isGeo },
     { key: "source", label: "Источник" },
     { key: "result", label: "Статус" },
-  ], 1);
+  ], 0);
 
   if (!report.noExisting && !report.existing.length) {
-    addValidationError(errors, "Добавь изменение текущего партнёра или отметь «Изменений нет»", "#no-existing", 2);
+    addValidationError(errors, "Добавь изменение текущего партнёра или отметь «Изменений нет»", "#no-existing", 1);
   }
   if (!report.noExisting) {
     validateRows(errors, "existing", report.existing, [
@@ -742,32 +757,32 @@ function validateReport() {
       { key: "movement", label: "Изменение" },
       { key: "reason", label: "Причина изменения" },
       { key: "action", label: "Что делаем" },
-    ], 2);
+    ], 1);
   }
 
   if (!report.noProblems && !report.problems.length) {
-    addValidationError(errors, "Добавь проблему или отметь «Проблем нет»", "#no-problems", 3);
+    addValidationError(errors, "Добавь проблему или отметь «Проблем нет»", "#no-problems", 2);
   }
   if (!report.noProblems) {
     validateRows(errors, "problems", report.problems, [
       { key: "email", label: "Почта партнёра в проблеме" },
       { key: "problem", label: "Описание проблемы" },
       { key: "resolution", label: "Решение / статус" },
-    ], 3);
+    ], 2);
   }
 
-  if (!isNonNegativeInteger(report.metrics.searchPlan)) addValidationError(errors, "План по поиску: целое число от 0", "#search-plan", 4);
-  if (!report.nextWeek.length) addValidationError(errors, "Добавь хотя бы один пункт на следующую неделю", '[data-add="nextWeek"]', 4);
-  validateRows(errors, "nextWeek", report.nextWeek, [{ key: "plan", label: "План на следующую неделю" }], 4);
+  if (!isNonNegativeInteger(report.metrics.searchPlan)) addValidationError(errors, "План по поиску: целое число от 0", "#search-plan", 3);
+  if (!report.nextWeek.length) addValidationError(errors, "Добавь хотя бы один пункт на следующую неделю", '[data-add="nextWeek"]', 3);
+  validateRows(errors, "nextWeek", report.nextWeek, [{ key: "plan", label: "План на следующую неделю" }], 3);
 
-  if (!report.priorities.length) addValidationError(errors, "Добавь хотя бы один приоритет", '[data-add="priorities"]', 5);
-  validateRows(errors, "priorities", report.priorities, [{ key: "text", label: "Приоритет" }], 5);
+  if (!report.priorities.length) addValidationError(errors, "Добавь хотя бы один приоритет", '[data-add="priorities"]', 4);
+  validateRows(errors, "priorities", report.priorities, [{ key: "text", label: "Приоритет" }], 4);
   if (!report.noTopProblems && !report.topProblems.length) {
-    addValidationError(errors, "Добавь топ-проблему или отметь «Проблем нет»", "#no-top-problems", 5);
+    addValidationError(errors, "Добавь топ-проблему или отметь «Проблем нет»", "#no-top-problems", 4);
   }
-  if (!report.noTopProblems) validateRows(errors, "topProblems", report.topProblems, [{ key: "text", label: "Топ-проблема" }], 5);
-  if (!report.achievements.length) addValidationError(errors, "Добавь хотя бы одно достижение", '[data-add="achievements"]', 5);
-  validateRows(errors, "achievements", report.achievements, [{ key: "text", label: "Достижение" }], 5);
+  if (!report.noTopProblems) validateRows(errors, "topProblems", report.topProblems, [{ key: "text", label: "Топ-проблема" }], 4);
+  if (!report.achievements.length) addValidationError(errors, "Добавь хотя бы одно достижение", '[data-add="achievements"]', 4);
+  validateRows(errors, "achievements", report.achievements, [{ key: "text", label: "Достижение" }], 4);
   return errors;
 }
 
@@ -793,8 +808,6 @@ function showValidation(errors) {
   const target = $(first.selector);
   const row = target?.closest("[data-row]");
   if (row?.classList.contains("is-collapsed")) setRowCollapsed(row, false);
-  const planRow = target?.closest("[data-plan-review-id]");
-  if (planRow?.classList.contains("is-collapsed")) setPlanReviewCollapsed(planRow, false);
   target?.focus();
   summary.scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -806,8 +819,8 @@ function dismissValidation() {
 function submitReport() {
   if (submitLocked) return;
   submitLocked = true;
-  if (syncPlanReview()) {
-    renderPlanReview();
+  if (syncPreviousSearchPlan()) {
+    renderPreviousSearchPlan();
     persistState();
   }
   const errors = validateReport();
@@ -1017,6 +1030,7 @@ function noteControl(item, target, label = "Комментарий") {
     messages.forEach((message) => {
       const card = makeElement("article", `thread-message${message.replyTo ? " is-reply" : ""}`);
       card.dataset.commentId = message.id;
+      if (message.context) card.append(makeElement("div", "thread-message-context", `Из раздела: ${message.context}`));
       const header = makeElement("div", "thread-message-header");
       header.append(makeElement("strong", "", message.author || "Без имени"));
       header.append(makeElement("time", "", formatDate(message.createdAt, {
@@ -1085,15 +1099,14 @@ function noteControl(item, target, label = "Комментарий") {
 }
 
 function detailValue(item, label, value, target) {
-  const block = makeElement("div", `detail-value${commentsFor(item, target).length ? " has-note" : ""}`);
+  const block = makeElement("div", "detail-value");
   block.append(makeElement("span", "detail-label", label));
   block.append(makeElement("strong", "detail-value-text", String(value ?? "").trim() || "—"));
-  block.append(noteControl(item, target));
   return block;
 }
 
 function detailRow(item, title, meta, lines, target) {
-  const row = makeElement("div", `detail-row${commentsFor(item, target).length ? " has-note" : ""}`);
+  const row = makeElement("div", "detail-row");
   const heading = makeElement("div", "detail-row-heading");
   heading.append(makeElement("strong", "", title || "—"));
   if (meta) heading.append(makeElement("span", "", meta));
@@ -1104,15 +1117,13 @@ function detailRow(item, title, meta, lines, target) {
     text.append(document.createTextNode(String(line.value)));
     row.append(text);
   });
-  row.append(noteControl(item, target));
   return row;
 }
 
 function detailSection(item, number, title, target) {
-  const section = makeElement("section", `submitted-section${commentsFor(item, target).length ? " has-note" : ""}`);
+  const section = makeElement("section", "submitted-section");
   const heading = makeElement("div", "submitted-section-heading");
   heading.append(makeElement("span", "section-number", number), makeElement("h3", "", title));
-  heading.append(noteControl(item, target, "Комментарий к разделу"));
   section.append(heading);
   return section;
 }
@@ -1132,12 +1143,12 @@ function renderSubmittedReport(item) {
   titleBlock.append(makeElement("p", "eyebrow", "Weekly Affiliate Report"));
   titleBlock.append(makeElement("h2", "", item.manager || "Менеджер не указан"));
   titleBlock.append(makeElement("p", "submitted-period", `Неделя ${weekRange(item.weekStart)}`));
-  header.append(titleBlock, noteControl(item, "report:general", "Комментарий к отчёту"));
+  header.append(titleBlock);
   sheet.append(header);
 
-  const totalsWrap = makeElement("section", `submitted-totals-wrap${commentsFor(item, "section:results").length ? " has-note" : ""}`);
+  const totalsWrap = makeElement("section", "submitted-totals-wrap");
   const totalsHeading = makeElement("div", "submitted-totals-heading");
-  totalsHeading.append(makeElement("h3", "", "Цифры недели"), noteControl(item, "section:results", "Комментарий к цифрам"));
+  totalsHeading.append(makeElement("h3", "", "Цифры недели"));
   const resultGrid = makeElement("div", "submitted-totals");
   const filled = acquisitionTotals(item);
   resultGrid.append(
@@ -1148,28 +1159,12 @@ function renderSubmittedReport(item) {
     detailValue(item, "Реактивации", filled.reactivated, "acquisition:reactivated"),
   );
   totalsWrap.append(totalsHeading, resultGrid);
+  if (numeric(item.previousSearchPlan) > 0) {
+    totalsWrap.append(makeElement("p", "submitted-previous-plan", `План с прошлой недели: ${item.previousSearchPlan}`));
+  }
   sheet.append(totalsWrap);
 
-  const planReview = detailSection(item, "01", "План с прошлой недели", "section:previous-plan");
-  if (item.planReview?.sourceReportId) {
-    planReview.append(makeElement("p", "detail-source", `План из отчёта за ${weekRange(item.planReview.sourceWeekStart)}`));
-  }
-  if (!item.planReview?.rows?.length) {
-    planReview.append(emptyDetail(item.version >= 7 ? "За прошлую неделю план не найден." : "В этом отчёте прошлый план ещё не фиксировался."));
-  } else {
-    item.planReview.rows.forEach((row) => {
-      planReview.append(detailRow(
-        item,
-        row.text,
-        planStatusLabels[row.status] || "Результат не указан",
-        [{ label: "Комментарий", value: row.comment }],
-        `previous-plan:${row.id}`,
-      ));
-    });
-  }
-  sheet.append(planReview);
-
-  const acquisition = detailSection(item, "02", "Привлечение", "section:acquisition");
+  const acquisition = detailSection(item, "01", "Привлечение", "section:acquisition");
   if (item.noSearch) acquisition.append(detailRow(item, "Поиском не занимался", "", [{ label: "Чем был занят", value: item.noSearchReason }], "acquisition:no-search"));
   item.acquisition.forEach((row) => {
     acquisition.append(detailRow(item, row.partner, `${kindLabels[row.kind] || "Тип не указан"} · ${row.geo} · ${row.source}`, [{ label: "Статус", value: row.result }], `acquisition:${row.id}`));
@@ -1177,7 +1172,7 @@ function renderSubmittedReport(item) {
   if (!item.acquisition.length && !item.noSearch) acquisition.append(emptyDetail("Данные не указаны."));
   sheet.append(acquisition);
 
-  const existing = detailSection(item, "03", "Текущие партнёры", "section:existing");
+  const existing = detailSection(item, "02", "Текущие партнёры", "section:existing");
   if (item.noExisting) existing.append(emptyDetail("Изменений по текущим партнёрам нет."));
   else if (!item.existing.length) existing.append(emptyDetail("Данные не указаны."));
   item.existing.forEach((row) => {
@@ -1185,21 +1180,21 @@ function renderSubmittedReport(item) {
   });
   sheet.append(existing);
 
-  const problems = detailSection(item, "04", "Проблемы", "section:problems");
+  const problems = detailSection(item, "03", "Проблемы", "section:problems");
   if (item.noProblems) problems.append(emptyDetail("Проблем нет."));
   else item.problems.forEach((row) => {
     problems.append(detailRow(item, row.email, "", [{ label: "Проблема", value: row.problem }, { label: "Решение / статус", value: row.resolution }], `problem:${row.id}`));
   });
   sheet.append(problems);
 
-  const nextWeek = detailSection(item, "05", "Следующая неделя", "section:next-week");
+  const nextWeek = detailSection(item, "04", "Следующая неделя", "section:next-week");
   nextWeek.append(detailValue(item, "План по поиску", item.metrics.searchPlan, "next-week:search-plan"));
   item.nextWeek.forEach((row) => {
     nextWeek.append(detailRow(item, row.plan, "", row.update ? [{ label: "Апдейт", value: row.update }] : [], `next-week:${row.id}`));
   });
   sheet.append(nextWeek);
 
-  const summary = detailSection(item, "06", "Главное за неделю", "section:summary");
+  const summary = detailSection(item, "05", "Главное за неделю", "section:summary");
   const summaryGrid = makeElement("div", "detail-summary-grid");
   const groups = [
     { title: "Приоритеты", rows: item.priorities, prefix: "priority", empty: "Не указаны" },
@@ -1217,6 +1212,10 @@ function renderSubmittedReport(item) {
   });
   summary.append(summaryGrid);
   sheet.append(summary);
+  const comments = makeElement("section", "submitted-comments");
+  comments.append(makeElement("h3", "", "Комментарии к отчёту"));
+  comments.append(noteControl(item, "report:general", "Открыть комментарии"));
+  sheet.append(comments);
   root.append(sheet);
 }
 
@@ -1230,7 +1229,6 @@ function refreshCommentThread(item, target) {
   if (!current) return;
   const replacement = noteControl(item, target, current.dataset.noteLabel || "Комментарий");
   current.replaceWith(replacement);
-  replacement.closest(".detail-row, .detail-value, .submitted-section, .submitted-totals-wrap")?.classList.add("has-note");
   const editor = $(".note-editor", replacement);
   editor.hidden = false;
   replacement.classList.add("is-open");
@@ -1318,10 +1316,6 @@ app.addEventListener("input", (event) => {
   }
   if (!report) return;
   dismissValidation();
-  if (target.matches("[data-plan-review-field]")) {
-    updatePlanReviewField(target);
-    return;
-  }
   if (target.matches("[data-row] [data-field]")) {
     updateRow(target);
     return;
@@ -1351,10 +1345,6 @@ app.addEventListener("change", (event) => {
   }
   if (!report || $("#editor-view").hidden) return;
   dismissValidation();
-  if (target.matches("[data-plan-review-field]")) {
-    updatePlanReviewField(target);
-    return;
-  }
   if (target.matches("[data-row] [data-field]")) {
     updateRow(target);
     return;
@@ -1362,16 +1352,16 @@ app.addEventListener("change", (event) => {
   if (target.id === "week-start") {
     report.weekStart = target.value;
     target.classList.remove("is-invalid");
-    syncPlanReview();
-    renderPlanReview();
+    syncPreviousSearchPlan();
+    renderPreviousSearchPlan();
     persistState();
     return;
   }
   if (target.id === "manager-name") {
     report.manager = target.value;
     target.classList.remove("is-invalid");
-    syncPlanReview();
-    renderPlanReview();
+    syncPreviousSearchPlan();
+    renderPreviousSearchPlan();
     persistState();
     return;
   }
@@ -1454,26 +1444,21 @@ app.addEventListener("click", (event) => {
     closeHelp();
     return;
   }
-  const planReviewToggle = event.target.closest("[data-toggle-plan-review]");
-  if (planReviewToggle) {
-    const row = planReviewToggle.closest("[data-plan-review-id]");
-    setPlanReviewCollapsed(row, !row.classList.contains("is-collapsed"));
-    return;
-  }
-  const collapsePlanReview = event.target.closest("[data-collapse-plan-review]");
-  if (collapsePlanReview) {
-    setPlanReviewCollapsed(collapsePlanReview.closest("[data-plan-review-id]"), true);
-    return;
-  }
   const rowToggle = event.target.closest("[data-toggle-row]");
   if (rowToggle) {
     const row = rowToggle.closest("[data-row]");
-    setRowCollapsed(row, !row.classList.contains("is-collapsed"));
+    if (row.classList.contains("is-collapsed")) {
+      if (!saveList(row.dataset.type)) return;
+      const freshRow = $(`[data-row][data-type="${row.dataset.type}"][data-id="${row.dataset.id}"]`);
+      if (freshRow) setRowCollapsed(freshRow, false);
+    } else {
+      saveList(row.dataset.type);
+    }
     return;
   }
-  const collapseButton = event.target.closest("[data-collapse-row]");
-  if (collapseButton) {
-    setRowCollapsed(collapseButton.closest("[data-row]"), true);
+  const saveListButton = event.target.closest("[data-save-list]");
+  if (saveListButton) {
+    saveList(saveListButton.dataset.saveList);
     return;
   }
   const addButton = event.target.closest("[data-add]");
