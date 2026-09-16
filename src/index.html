@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light" />
     <title>Weekly Affiliate Report</title>
-    <link rel="stylesheet" href="styles.css?v=10" />
+    <link rel="stylesheet" href="styles.css?v=11" />
   </head>
   <body>
     <div id="app" class="app">
@@ -112,13 +112,16 @@
               <button class="help-button" type="button" data-help="help-acquisition" aria-label="Что заполнять в привлечении" aria-expanded="false">?</button>
               <div id="help-acquisition" class="help-popover" hidden>
                 <strong>Что вводить</strong>
-                <p>Сверху будет план по поиску из прошлого отчёта. Ниже добавь фактически найденных партнёров, выбери тип и заполни почту или имя. Счётчики обновятся сами. Новый партнёр: зарегистрирован за неделю или уже обсуждает сделку. Новая сделка: условия отправлены за неделю. Реактивирован: вернулся в работу.</p>
+                <p>Сверху будет план по поиску из прошлого отчёта. В поле ниже укажи план на следующую неделю, затем добавь фактически найденных партнёров. Выбери тип и заполни почту или имя. Счётчики обновятся сами. Новый партнёр: зарегистрирован за неделю или уже обсуждает сделку. Новая сделка: условия отправлены за неделю. Реактивирован: вернулся в работу.</p>
                 <strong>Пример</strong>
-                <p>Новые партнёры: 7. Реактивированы: 1. Новые сделки: 4. partner@mail.com, GEO: BR, источник: Facebook, CPA отправлен, ждём подтверждение.</p>
+                <p>План по поиску: 30. Новые партнёры: 7. Реактивированы: 1. Новые сделки: 4. partner@mail.com, GEO: BR, источник: Facebook, CPA отправлен, ждём подтверждение.</p>
               </div>
             </div>
             <div class="section-body">
               <p id="acquisition-plan-info" class="acquisition-plan-info" hidden></p>
+              <label class="single-metric">План по поиску
+                <input id="search-plan" type="number" min="0" inputmode="numeric" placeholder="0" />
+              </label>
               <div class="search-control">
                 <label class="empty-option"><input id="no-search" type="checkbox" /> Поиском не занимался</label>
                 <label id="no-search-reason-wrap" class="required-reason" hidden>Чем был занят вместо поиска <span>обязательно</span>
@@ -190,16 +193,13 @@
               <button class="help-button" type="button" data-help="help-next-week" aria-label="Что заполнять в плане на следующую неделю" aria-expanded="false">?</button>
               <div id="help-next-week" class="help-popover" hidden>
                 <strong>Что вводить</strong>
-                <p>План на новую неделю. Число из поля «План по поиску» в следующем отчёте покажется обычной информационной строкой.</p>
+                <p>Конкретные задачи на новую неделю. Поиск партнёров сюда дублировать не нужно, для него есть отдельное поле в «Привлечении».</p>
                 <strong>Пример</strong>
                 <p>Реактивировать 5 партнёров по BR.</p>
               </div>
             </div>
             <div class="section-body">
-              <label class="single-metric">План по поиску
-                <input id="search-plan" type="number" min="0" inputmode="numeric" placeholder="0" />
-              </label>
-              <div id="next-week-list" class="dynamic-list list-with-offset"></div>
+              <div id="next-week-list" class="dynamic-list"></div>
               <div class="block-actions">
                 <button class="button button-add" data-add="nextWeek" type="button">+ Добавить пункт</button>
                 <button class="button button-save" data-save-list="nextWeek" type="button">Сохранить</button>
@@ -363,6 +363,6 @@
       </div>
     </template>
 
-    <script src="app.js?v=10" defer></script>
+    <script src="app.js?v=11" defer></script>
   </body>
 </html>

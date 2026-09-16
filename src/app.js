@@ -148,6 +148,7 @@ function commentContext(target, reportValue = {}) {
     "acquisition:reactivated": "Реактивации",
     "section:previous-plan": "План с прошлой недели",
     "section:acquisition": "Привлечение",
+    "acquisition:search-plan": "План по поиску",
     "acquisition:no-search": "Привлечение",
     "section:existing": "Текущие партнёры",
     "section:problems": "Проблемы",
@@ -771,7 +772,7 @@ function validateReport() {
     ], 2);
   }
 
-  if (!isNonNegativeInteger(report.metrics.searchPlan)) addValidationError(errors, "План по поиску: целое число от 0", "#search-plan", 3);
+  if (!isNonNegativeInteger(report.metrics.searchPlan)) addValidationError(errors, "План по поиску: целое число от 0", "#search-plan", 0);
   if (!report.nextWeek.length) addValidationError(errors, "Добавь хотя бы один пункт на следующую неделю", '[data-add="nextWeek"]', 3);
   validateRows(errors, "nextWeek", report.nextWeek, [{ key: "plan", label: "План на следующую неделю" }], 3);
 
@@ -1165,6 +1166,7 @@ function renderSubmittedReport(item) {
   if (numeric(item.previousSearchPlan) > 0) {
     acquisition.append(makeElement("p", "detail-acquisition-plan", `План по поиску с прошлой недели: ${item.previousSearchPlan}`));
   }
+  acquisition.append(detailValue(item, "План по поиску", item.metrics.searchPlan, "acquisition:search-plan"));
   if (item.noSearch) acquisition.append(detailRow(item, "Поиском не занимался", "", [{ label: "Чем был занят", value: item.noSearchReason }], "acquisition:no-search"));
   item.acquisition.forEach((row) => {
     acquisition.append(detailRow(item, row.partner, `${kindLabels[row.kind] || "Тип не указан"} · ${row.geo} · ${row.source}`, [{ label: "Статус", value: row.result }], `acquisition:${row.id}`));
@@ -1188,7 +1190,6 @@ function renderSubmittedReport(item) {
   sheet.append(problems);
 
   const nextWeek = detailSection(item, "04", "Следующая неделя", "section:next-week");
-  nextWeek.append(detailValue(item, "План по поиску", item.metrics.searchPlan, "next-week:search-plan"));
   item.nextWeek.forEach((row) => {
     nextWeek.append(detailRow(item, row.plan, "", row.update ? [{ label: "Апдейт", value: row.update }] : [], `next-week:${row.id}`));
   });
