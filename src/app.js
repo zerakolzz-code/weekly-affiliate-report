@@ -464,7 +464,7 @@ function renderReport() {
   $("#no-problems").checked = report.noProblems;
   $("#no-top-problems").checked = report.noTopProblems;
   Object.keys(listConfig).forEach(renderList);
-  renderPreviousSearchPlan();
+  renderAcquisitionSearchPlan();
   renderAcquisitionSummary();
   renderMovementSummary();
   renderOptionalFields();
@@ -487,12 +487,12 @@ function renderManagerOptions() {
   });
 }
 
-function renderPreviousSearchPlan() {
-  const info = $("#previous-plan-info");
+function renderAcquisitionSearchPlan() {
+  const info = $("#acquisition-plan-info");
   const value = String(report.previousSearchPlan ?? "").trim();
   const hasPlan = numeric(value) > 0;
   info.hidden = !hasPlan;
-  info.textContent = hasPlan ? `План с прошлой недели: ${value}` : "";
+  info.textContent = hasPlan ? `План по поиску с прошлой недели: ${value}` : "";
 }
 
 function renderOptionalFields() {
@@ -820,7 +820,7 @@ function submitReport() {
   if (submitLocked) return;
   submitLocked = true;
   if (syncPreviousSearchPlan()) {
-    renderPreviousSearchPlan();
+    renderAcquisitionSearchPlan();
     persistState();
   }
   const errors = validateReport();
@@ -1159,12 +1159,12 @@ function renderSubmittedReport(item) {
     detailValue(item, "Реактивации", filled.reactivated, "acquisition:reactivated"),
   );
   totalsWrap.append(totalsHeading, resultGrid);
-  if (numeric(item.previousSearchPlan) > 0) {
-    totalsWrap.append(makeElement("p", "submitted-previous-plan", `План с прошлой недели: ${item.previousSearchPlan}`));
-  }
   sheet.append(totalsWrap);
 
   const acquisition = detailSection(item, "01", "Привлечение", "section:acquisition");
+  if (numeric(item.previousSearchPlan) > 0) {
+    acquisition.append(makeElement("p", "detail-acquisition-plan", `План по поиску с прошлой недели: ${item.previousSearchPlan}`));
+  }
   if (item.noSearch) acquisition.append(detailRow(item, "Поиском не занимался", "", [{ label: "Чем был занят", value: item.noSearchReason }], "acquisition:no-search"));
   item.acquisition.forEach((row) => {
     acquisition.append(detailRow(item, row.partner, `${kindLabels[row.kind] || "Тип не указан"} · ${row.geo} · ${row.source}`, [{ label: "Статус", value: row.result }], `acquisition:${row.id}`));
@@ -1353,7 +1353,7 @@ app.addEventListener("change", (event) => {
     report.weekStart = target.value;
     target.classList.remove("is-invalid");
     syncPreviousSearchPlan();
-    renderPreviousSearchPlan();
+    renderAcquisitionSearchPlan();
     persistState();
     return;
   }
@@ -1361,7 +1361,7 @@ app.addEventListener("change", (event) => {
     report.manager = target.value;
     target.classList.remove("is-invalid");
     syncPreviousSearchPlan();
-    renderPreviousSearchPlan();
+    renderAcquisitionSearchPlan();
     persistState();
     return;
   }

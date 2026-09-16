@@ -234,8 +234,8 @@ input::placeholder, textarea::placeholder { color: #9ca5a0; }
 .leaderboard-row.is-missing { background: #fafafa; color: #a1a8a4; }
 .leaderboard-row.is-missing .leaderboard-manager { color: #59635e; }
 
-.previous-plan-info, .submitted-previous-plan { margin: 0 0 12px; padding: 10px 13px; border: 1px solid #d9e2dd; border-radius: 10px; background: #edf3f0; color: #3f5148; font-size: 11px; font-weight: 750; }
-.submitted-previous-plan { margin: 11px 0 0; }
+.acquisition-plan-info, .detail-acquisition-plan { margin: 0 0 12px; padding: 10px 13px; border: 1px solid #d9e2dd; border-radius: 10px; background: #edf3f0; color: #3f5148; font-size: 11px; font-weight: 750; }
+.detail-acquisition-plan { margin-top: 0; }
 
 .view-heading {
   display: flex;

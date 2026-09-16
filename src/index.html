@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light" />
     <title>Weekly Affiliate Report</title>
-    <link rel="stylesheet" href="styles.css?v=9" />
+    <link rel="stylesheet" href="styles.css?v=10" />
   </head>
   <body>
     <div id="app" class="app">
@@ -90,7 +90,7 @@
             <div>
               <label class="field-label" for="week-start">Неделя</label>
               <input id="week-start" class="week-picker" type="date" />
-              <p class="period-note">Выбери понедельник отчётной недели. Если в прошлом отчёте был план по поиску, он покажется ниже.</p>
+              <p class="period-note">Выбери понедельник отчётной недели. План по поиску из прошлого отчёта покажется в блоке «Привлечение».</p>
             </div>
             <div class="report-meta">
               <label class="field-label" for="manager-name">Менеджер</label>
@@ -106,20 +106,19 @@
             <div class="weekly-total"><span>Новые сделки</span><strong id="new-deals-count">0</strong></div>
             <div class="weekly-total"><span>Реактивации</span><strong id="reactivated-count">0</strong></div>
           </section>
-          <p id="previous-plan-info" class="previous-plan-info" hidden></p>
-
           <article class="report-card is-collapsed" data-section-card>
             <div class="card-heading">
               <button class="section-toggle" type="button" data-toggle-section aria-expanded="false"><span class="section-number">01</span><h2>Привлечение</h2><span class="section-chevron">⌄</span></button>
               <button class="help-button" type="button" data-help="help-acquisition" aria-label="Что заполнять в привлечении" aria-expanded="false">?</button>
               <div id="help-acquisition" class="help-popover" hidden>
                 <strong>Что вводить</strong>
-                <p>Добавь партнёра, выбери тип и заполни почту или имя. Счётчики обновятся сами. Новый партнёр: зарегистрирован за неделю или уже обсуждает сделку. Новая сделка: условия отправлены за неделю. Реактивирован: вернулся в работу.</p>
+                <p>Сверху будет план по поиску из прошлого отчёта. Ниже добавь фактически найденных партнёров, выбери тип и заполни почту или имя. Счётчики обновятся сами. Новый партнёр: зарегистрирован за неделю или уже обсуждает сделку. Новая сделка: условия отправлены за неделю. Реактивирован: вернулся в работу.</p>
                 <strong>Пример</strong>
                 <p>Новые партнёры: 7. Реактивированы: 1. Новые сделки: 4. partner@mail.com, GEO: BR, источник: Facebook, CPA отправлен, ждём подтверждение.</p>
               </div>
             </div>
             <div class="section-body">
+              <p id="acquisition-plan-info" class="acquisition-plan-info" hidden></p>
               <div class="search-control">
                 <label class="empty-option"><input id="no-search" type="checkbox" /> Поиском не занимался</label>
                 <label id="no-search-reason-wrap" class="required-reason" hidden>Чем был занят вместо поиска <span>обязательно</span>
@@ -364,6 +363,6 @@
       </div>
     </template>
 
-    <script src="app.js?v=9" defer></script>
+    <script src="app.js?v=10" defer></script>
   </body>
 </html>
